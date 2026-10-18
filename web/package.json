@@ -1,0 +1,27 @@
+{
+  "name": "pathology-web",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "client",
+    "viewer"
+  ],
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc -p jsconfig.json",
+    "test": "node --test --experimental-test-coverage --test-coverage-include=client/src/** client/test/*.test.js",
+    "build": "npm run build -w viewer",
+    "e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@playwright/test": "1.64.1",
+    "@types/node": "24.19.1",
+    "eslint": "10.13.0",
+    "globals": "17.13.0",
+    "typescript": "5.9.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

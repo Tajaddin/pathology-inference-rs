@@ -1,0 +1,11 @@
+{
+  "name": "@pathology/client",
+  "version": "0.1.0",
+  "description": "JavaScript client for the pathology inference service (no dependencies)",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": { ".": "./src/index.js" },
+  "files": ["src"],
+  "license": "MIT",
+  "engines": { "node": ">=20" }
+}

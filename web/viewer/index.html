@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Lymph node metastasis viewer</title>
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Lymph node metastasis viewer</h1>
+      <p class="sub">PatchCamelyon held-out test patches, scored live by the Rust inference service.</p>
+    </header>
+    <main>
+      <section class="controls" aria-label="Controls">
+        <label>Tile
+          <select id="tile" aria-label="Demo tile"></select>
+        </label>
+        <label>Stride
+          <select id="stride" aria-label="Window stride">
+            <option value="96">96 px (one window per patch)</option>
+            <option value="48">48 px (overlapping)</option>
+          </select>
+        </label>
+        <label class="check"><input type="checkbox" id="truth" checked /> Show ground truth</label>
+        <label>Opacity <input type="range" id="opacity" min="0" max="100" value="65" aria-label="Heatmap opacity" /></label>
+        <button id="run" type="button">Score tile</button>
+      </section>
+      <section class="stage">
+        <div class="canvas-wrap">
+          <canvas id="tile-canvas" width="768" height="768" aria-label="Tile with heatmap"></canvas>
+          <canvas id="overlay" width="768" height="768" aria-hidden="true"></canvas>
+        </div>
+        <aside>
+          <h2>Result</h2>
+          <dl id="summary">
+            <dt>Status</dt><dd id="status">Choose a tile and score it.</dd>
+          </dl>
+          <h2>Legend</h2>
+          <div class="legend" aria-hidden="true"><span>0.1</span><div class="bar"></div><span>1.0</span></div>
+          <p class="note">Outlined cells are tumour patches in the PCam test labels. Scores use a temperature fitted
+            on the validation split; on the test split they are not well calibrated (see the model card), so read
+            them as a ranking, not as risks. Research demo, not for diagnosis.</p>
+        </aside>
+      </section>
+    </main>
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>

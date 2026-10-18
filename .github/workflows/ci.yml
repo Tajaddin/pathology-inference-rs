@@ -44,6 +44,54 @@ jobs:
       - run: uv run pytest --cov=pcam --cov=baseline --cov-report=term --cov-report=xml
         env: { TF_CPP_MIN_LOG_LEVEL: "2" }
 
+  web:
+    name: JavaScript client and viewer (eslint, tsc, node:test, build)
+    runs-on: ubuntu-24.04
+    defaults: { run: { working-directory: web } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "24", cache: npm, cache-dependency-path: web/package-lock.json }
+      - run: npm ci --no-audit --no-fund
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  e2e:
+    name: Playwright against the Rust service (desktop and mobile)
+    runs-on: ubuntu-24.04
+    needs: [rust, web]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked -p pathology-service
+      - name: start the service with the committed model
+        run: |
+          API_KEYS=viewer:local-dev-key-viewer-000001 CORS_ORIGINS=http://localhost:8088 \
+            nohup target/release/pathology-service > service.log 2>&1 &
+          for _ in $(seq 1 60); do curl -fsS http://127.0.0.1:8080/ready && exit 0; sleep 1; done
+          cat service.log; exit 1
+      - uses: actions/setup-node@v4
+        with: { node-version: "24", cache: npm, cache-dependency-path: web/package-lock.json }
+      - name: build and serve the viewer
+        working-directory: web
+        run: |
+          npm ci --no-audit --no-fund
+          VITE_SERVICE_URL=http://localhost:8080 VITE_API_KEY=local-dev-key-viewer-000001 npm run build
+          nohup npx vite preview --port 8088 --strictPort viewer > preview.log 2>&1 &
+          npx playwright install --with-deps chromium
+          for _ in $(seq 1 30); do curl -fsS http://localhost:8088 > /dev/null && exit 0; sleep 1; done
+          exit 1
+      - run: npm run e2e
+        working-directory: web
+      - if: failure()
+        run: cat service.log web/preview.log
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with: { name: playwright-report, path: web/playwright-report, retention-days: 14 }
+
   bash:
     name: shellcheck and bats
     runs-on: ubuntu-24.04
@@ -61,7 +109,7 @@ jobs:
       - run: docker run --rm -v "$PWD/observability:/w" -w /w --entrypoint promtool prom/prometheus:v3.5.0 test rules alerts_test.yml
 
   security:
-    name: secrets and dependency audits (cargo, pip)
+    name: secrets and dependency audits (cargo, pip, npm)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -78,3 +126,5 @@ jobs:
         with: { version: "${{ env.UV_VERSION }}" }
       - run: uv sync --locked --extra cpu --extra baseline --extra dev && uv run pip-audit --skip-editable --progress-spinner off
         working-directory: training
+      - run: npm ci --no-audit --no-fund && npm audit --audit-level=high
+        working-directory: web
