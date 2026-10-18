@@ -21,7 +21,11 @@ one or a few patches per request. ONNX Runtime sessions in ort 2.0 need exclusiv
 
 ## Consequences
 
-- At low load a request waits at most `MAX_WAIT_US` (2 ms by default) for company; the load test measures the
-  throughput gained against that latency cost.
+- At low load a request waits at most `MAX_WAIT_US` for company. The load test measured that cost
+  (`reports/k6/summary.json`, 4 CPUs each): with the first setting (2 workers x 2 threads, 2 ms) single-patch p99
+  was 10-34 ms against the Python baseline's 6-9 ms. With 4 workers x 1 thread and 0.5 ms (now the default) it is
+  8-12 ms up to 400 requests/s, and at 800 requests/s the service keeps up (p99 154 ms, nothing dropped) where the
+  Python baseline saturates at 486 requests/s with a p99 of 9.2 s. One intra-op thread per worker beats two:
+  ONNX Runtime's intra-op parallelism gains little on batches this small.
 - Tests check batching actually happens under concurrency, that each caller gets its own results, and that model
   errors reach every waiting caller.

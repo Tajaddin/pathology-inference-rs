@@ -1,0 +1,18 @@
+# Same CPU budget for both services during load tests, so the comparison is about the code, not the cores (`make compare`):
+#   docker compose -f docker-compose.yml -f bench/compose.bench.yml --profile compare up -d --wait service baseline
+# Rust: BENCH_WORKERS inference workers x BENCH_INTRA intra-op threads, batching window BENCH_WAIT_US (defaults
+# 4 x 1 and 500 us, the tuned setting; the first run used 2 x 2 and 2000 us). Python: 4 processes x 1 thread.
+services:
+  service:
+    cpus: 4
+    environment:
+      WORKERS: "${BENCH_WORKERS:-4}"
+      INTRA_THREADS: "${BENCH_INTRA:-1}"
+      MAX_BATCH: "32"
+      MAX_WAIT_US: "${BENCH_WAIT_US:-500}"
+      RATE_LIMIT_PER_MINUTE: "10000000"
+
+  baseline:
+    cpus: 4
+    environment:
+      INTRA_THREADS: "1"
