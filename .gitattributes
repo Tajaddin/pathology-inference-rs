@@ -1,0 +1,6 @@
+* text=auto eol=lf
+*.sh text eol=lf
+*.png binary
+*.onnx binary
+*.npy binary
+*.bats text eol=lf
