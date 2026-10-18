@@ -1,0 +1,28 @@
+{
+  "measured_at": "2026-10-18T21:04:45+00:00",
+  "url": "https://pathology-service-llwaky6tma-uc.a.run.app",
+  "label": "cold",
+  "first_request": {
+    "path": "/health",
+    "status": 200,
+    "ms": 2349.8
+  },
+  "model": {
+    "version": "1",
+    "input_name": "image",
+    "output_name": "output_0",
+    "temperature": 1.5280297,
+    "threshold": 0.5
+  },
+  "classify_16_patches_ms": [
+    515.2,
+    463.6,
+    489.6,
+    400.1,
+    443.7
+  ],
+  "max_abs_diff_vs_local": 2.922973629804204e-08,
+  "patches_matching_label": 12,
+  "patches": 16,
+  "note": "client on a home connection in Tampa, FL; service in us-central1; latencies include the network"
+}
