@@ -108,6 +108,24 @@ jobs:
       - uses: actions/checkout@v4
       - run: docker run --rm -v "$PWD/observability:/w" -w /w --entrypoint promtool prom/prometheus:v3.5.0 test rules alerts_test.yml
 
+  terraform:
+    name: terraform fmt, validate, tflint and trivy
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_version: "1.16.6" }
+      - run: terraform -chdir=infra/terraform fmt -check -recursive
+      - run: terraform -chdir=infra/terraform init -backend=false -input=false
+      - run: terraform -chdir=infra/terraform validate
+      - uses: terraform-linters/setup-tflint@v4
+        with: { tflint_version: v0.64.0 }
+      - run: tflint --chdir=infra/terraform --minimum-failure-severity=warning
+      - name: trivy IaC scan (high and critical fail)
+        run: |
+          curl -sSfL https://github.com/aquasecurity/trivy/releases/download/v0.76.0/trivy_0.76.0_Linux-64bit.tar.gz | tar -xz trivy
+          ./trivy config --severity HIGH,CRITICAL --exit-code 1 --ignorefile .trivyignore infra/terraform
+
   security:
     name: secrets and dependency audits (cargo, pip, npm)
     runs-on: ubuntu-24.04
@@ -128,3 +146,49 @@ jobs:
         working-directory: training
       - run: npm ci --no-audit --no-fund && npm audit --audit-level=high
         working-directory: web
+
+  images:
+    name: build the three images and scan the service image
+    runs-on: ubuntu-24.04
+    needs: [rust]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - run: |
+          docker build -f docker/service.Dockerfile -t pathology/service:ci .
+          docker build -f docker/baseline.Dockerfile -t pathology/baseline:ci .
+          docker build -f docker/viewer.Dockerfile -t pathology/viewer:ci .
+          docker image ls pathology/* --format '{{.Repository}} {{.Size}}'
+      - name: trivy image scan (critical fails)
+        run: |
+          curl -sSfL https://github.com/aquasecurity/trivy/releases/download/v0.76.0/trivy_0.76.0_Linux-64bit.tar.gz | tar -xz trivy
+          ./trivy image --severity CRITICAL --exit-code 1 --ignore-unfixed pathology/service:ci
+
+  stack:
+    name: docker compose smoke test (make up)
+    runs-on: ubuntu-24.04
+    needs: [rust]
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose up -d --build --wait --wait-timeout 600 service viewer prometheus
+      - name: classify a real test patch, see it in the metrics and in Prometheus
+        run: |
+          python3 - <<'EOF'
+          import base64, json, urllib.request
+          fx = json.load(open("service/tests/fixtures/parity.json"))[0]
+          body = {"patches": [{"id": "p", "image_base64": base64.b64encode(open(f"service/tests/fixtures/{fx['file']}", "rb").read()).decode()}]}
+          req = urllib.request.Request("http://localhost:8080/v1/classify", json.dumps(body).encode(),
+                                       {"content-type": "application/json", "authorization": "Bearer local-dev-key-loadtest-0001"})
+          out = json.load(urllib.request.urlopen(req, timeout=30))
+          p = out["results"][0]["probability"]
+          assert abs(p - fx["probability"]) < 1e-4, (p, fx["probability"])
+          print("probability", p, "expected", fx["probability"])
+          EOF
+          curl -fsS http://localhost:8080/metrics | grep -q pathology_requests_total
+          curl -fsS http://localhost:8088 | grep -q "Lymph node"
+          for _ in $(seq 1 20); do
+            curl -fsS 'http://localhost:9097/api/v1/query?query=up%7Bjob%3D%22service%22%7D' | grep -q '"1"\]' && exit 0; sleep 3
+          done
+          exit 1
+      - if: failure()
+        run: docker compose logs
