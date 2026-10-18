@@ -61,6 +61,7 @@ resource "google_service_account_iam_member" "deployer_acts_as_service" {
 # --- Cost guard rail and alerts -----------------------------------------------------------------------------
 
 resource "google_billing_budget" "monthly" {
+  provider        = google.billing
   count           = var.billing_account_id == "" ? 0 : 1
   billing_account = var.billing_account_id
   display_name    = "${local.name} monthly"
@@ -80,6 +81,8 @@ resource "google_billing_budget" "monthly" {
   threshold_rules {
     threshold_percent = 1.0
   }
+
+  depends_on = [google_project_service.apis]
 }
 
 resource "google_monitoring_notification_channel" "email" {

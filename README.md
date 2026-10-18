@@ -18,9 +18,10 @@ viewer that draws tumour heatmaps over slide tiles. Research demo, not a medical
 | Under load (4 CPUs each, k6) | At 800 single-patch requests/s the Rust service **serves all of them (p99 154 ms, 0 dropped)**; the Python baseline saturates at **486/s with p99 9.2 s** and drops 8,657 | [`reports/k6`](reports/k6) |
 | At light load | Python is about 1 ms faster (p99 6.3 ms against 7.6 ms at 100 requests/s): batching waits up to 0.5 ms for company | same |
 | Footprint | Service image 180 MB; Python baseline 977 MB | `docker image ls` |
+| On Cloud Run (us-central1, 2 vCPU, scale to zero) | Same probabilities as the local model on the 16 test patches (max difference **2.9e-08**). First request after scaling to zero **2.35 s**, warm 0.19 s; k6 at 20, 50 and 100 single-patch requests/s: **0 failures, p99 136, 122 and 142 ms**, measured from a home connection in Tampa, so the network is most of it | [`reports/cloud-run`](reports/cloud-run) |
 
-Every timing is from one desktop: Intel i5-13600KF, 32 GB (WSL2 VM 15.5 GB), RTX 4060 8 GB, Docker Desktop. The
-service is not deployed yet, so none of this is Cloud Run ([DEPLOY.md](docs/DEPLOY.md)).
+Every local timing is from one desktop: Intel i5-13600KF, 32 GB (WSL2 VM 15.5 GB), RTX 4060 8 GB, Docker Desktop.
+The Cloud Run row is the deployed service, measured on 2026-10-18 ([DEPLOY.md](docs/DEPLOY.md)).
 
 The first service configuration (2 workers x 2 threads, 2 ms window) lost to Python at every load below
 saturation; the dashboard showed why, and [ADR 0003](docs/adr/0003-dynamic-batching-with-worker-owned-sessions.md)
@@ -77,14 +78,17 @@ Reproduce the comparison: `make compare bench`.
 
 `infra/terraform` puts the service on Cloud Run with the model mounted from a versioned Cloud Storage bucket, API
 keys from Secret Manager, deploys from GitHub Actions through Workload Identity Federation (no keys), a budget
-alert and alert policies for 5xx and p99 latency. Validated and scanned in CI; not applied.
+alert and alert policies for 5xx and p99 latency. Validated and scanned in CI, and applied to a GCP project on
+2026-10-18 (30 resources). That first apply found one bug: the budget needs a quota project when Terraform runs
+with user credentials, now set on that resource alone.
 
 ## Limitations
 
 - Not a medical device: PCam comes from one challenge (two Dutch centres); other scanners and stains will shift
   the inputs. The scores rank patches; they are not calibrated risks on the test split.
 - The tiles in the viewer are mosaics of real test patches, not contiguous slide regions.
-- All timings are local; Cloud Run cold starts and per-instance throughput are not measured yet.
+- Cloud Run latencies are measured from one home connection, so they are mostly network; the cloud load test
+  stopped at 100 requests/s, so per-instance throughput on Cloud Run is not measured.
 
 ## How it was built
 
