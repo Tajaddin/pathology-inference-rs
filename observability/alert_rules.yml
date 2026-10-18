@@ -1,0 +1,38 @@
+groups:
+  - name: pathology-service
+    rules:
+      - alert: PathologyErrorRate
+        expr: |
+          sum(rate(pathology_requests_total{status=~"5.."}[5m]))
+            / clamp_min(sum(rate(pathology_requests_total[5m])), 1e-9) > 0.01
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "More than 1% of inference requests fail with 5xx"
+          runbook: "docs/RUNBOOK.md#errors"
+
+      - alert: PathologyClassifyLatency
+        expr: |
+          histogram_quantile(0.99, sum by (le) (rate(pathology_request_seconds_bucket{route="/v1/classify"}[5m]))) > 0.2
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Patch classification p99 latency above 200 ms"
+          runbook: "docs/RUNBOOK.md#latency"
+
+      - alert: PathologyQueueing
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(pathology_queue_wait_seconds_bucket[5m]))) > 0.05
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Requests wait more than 50 ms for an inference worker (p95): add workers or replicas"
+          runbook: "docs/RUNBOOK.md#queueing"
+
+      - alert: PathologyInferenceFailures
+        expr: sum(increase(pathology_errors_total{code="unavailable"}[5m])) > 5
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "Inference is failing or timing out; requests get 503"
+          runbook: "docs/RUNBOOK.md#errors"
