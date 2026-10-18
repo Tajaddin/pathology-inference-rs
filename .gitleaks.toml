@@ -1,0 +1,13 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "documented local placeholders and lock files"
+paths = [
+  '''Cargo\.lock''',
+  '''package-lock\.json''',
+  '''uv\.lock''',
+]
+regexes = [
+  '''local-dev-key-[a-z0-9-]+''',
+]
