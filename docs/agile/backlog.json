@@ -1,0 +1,309 @@
+{
+  "labels": [
+    {
+      "name": "story",
+      "color": "1d76db",
+      "description": "User story: delivers something a user of the system can see"
+    },
+    {
+      "name": "chore",
+      "color": "c5def5",
+      "description": "Engineering work with no user-visible change"
+    },
+    {
+      "name": "spike",
+      "color": "fbca04",
+      "description": "Time-boxed investigation that ends in a decision"
+    },
+    {
+      "name": "bug",
+      "color": "d73a4a",
+      "description": "Something the system got wrong"
+    },
+    {
+      "name": "area:ml",
+      "color": "5319e7",
+      "description": "TensorFlow training, evaluation, export"
+    },
+    {
+      "name": "area:rust",
+      "color": "dea584",
+      "description": "Rust inference service"
+    },
+    {
+      "name": "area:web",
+      "color": "f1e05a",
+      "description": "JavaScript viewer and client"
+    },
+    {
+      "name": "area:infra",
+      "color": "006b75",
+      "description": "Docker, Terraform, CI"
+    },
+    {
+      "name": "area:docs",
+      "color": "bfdadc",
+      "description": "README, ADRs, model card"
+    },
+    {
+      "name": "points:1",
+      "color": "ededed",
+      "description": "Story points"
+    },
+    {
+      "name": "points:2",
+      "color": "ededed",
+      "description": "Story points"
+    },
+    {
+      "name": "points:3",
+      "color": "ededed",
+      "description": "Story points"
+    },
+    {
+      "name": "points:5",
+      "color": "ededed",
+      "description": "Story points"
+    },
+    {
+      "name": "points:8",
+      "color": "ededed",
+      "description": "Story points"
+    },
+    {
+      "name": "blocked:account",
+      "color": "b60205",
+      "description": "Needs an account or credential only the owner can create"
+    }
+  ],
+  "milestones": [
+    {
+      "title": "Sprint 1 - Data and model",
+      "due": "2026-10-19",
+      "description": "Goal: PCam prepared reproducibly, a TensorFlow classifier trained on GPU, evaluated once on the held-out test split with calibration, and exported to ONNX with a parity check."
+    },
+    {
+      "title": "Sprint 2 - Rust inference service",
+      "due": "2026-10-20",
+      "description": "Goal: an authenticated Rust (axum + ONNX Runtime) service with dynamic batching, patch and tile endpoints, metrics, and a measured comparison with a Python baseline."
+    },
+    {
+      "title": "Sprint 3 - JavaScript viewer and client",
+      "due": "2026-10-21",
+      "description": "Goal: a plain-JavaScript slide viewer that shows tumour heatmaps from the service, a JavaScript client library with tests, and end-to-end tests."
+    },
+    {
+      "title": "Sprint 4 - Release",
+      "due": "2026-10-22",
+      "description": "Goal: one-command stack, load tests, Terraform for Cloud Run, CI green, README and model card."
+    },
+    {
+      "title": "Backlog",
+      "due": null,
+      "description": "Not scheduled: work that needs an account or a later sprint."
+    }
+  ],
+  "issues": [
+    {
+      "title": "Repository scaffold: Cargo workspace, Python training project, JS packages, CI skeleton",
+      "milestone": "Sprint 1 - Data and model",
+      "labels": [
+        "chore",
+        "area:infra",
+        "points:2"
+      ],
+      "body": "As a contributor, I want the three toolchains (cargo, uv, npm) set up with lint and test commands and a CI that runs them, so that every push is checked.\n\n**Acceptance criteria**\n- [ ] `cargo fmt/clippy/test`, `ruff/mypy/pytest`, `eslint/vitest` all run in CI\n- [ ] secret scan before every push and in CI"
+    },
+    {
+      "title": "Prepare PCam reproducibly with checksums",
+      "milestone": "Sprint 1 - Data and model",
+      "labels": [
+        "story",
+        "area:ml",
+        "points:3"
+      ],
+      "body": "As an ML engineer, I want a script that downloads the PatchCamelyon files, checks them and converts them to memory-mapped arrays, so that training reads 262,144 patches fast and anyone can rebuild them.\n\n**Acceptance criteria**\n- [ ] counts and label balance per split verified against the published numbers\n- [ ] train/valid/test kept exactly as published (no reshuffling)"
+    },
+    {
+      "title": "Train a TensorFlow classifier on GPU",
+      "milestone": "Sprint 1 - Data and model",
+      "labels": [
+        "story",
+        "area:ml",
+        "points:5"
+      ],
+      "body": "As a pathologist's tool, I want a patch classifier for lymph-node metastasis trained with stain and geometric augmentation, so that tumour regions can be flagged.\n\n**Acceptance criteria**\n- [ ] training runs in a pinned TensorFlow GPU container\n- [ ] early stopping on the validation split only"
+    },
+    {
+      "title": "Held-out evaluation, calibration and test-time augmentation",
+      "milestone": "Sprint 1 - Data and model",
+      "labels": [
+        "story",
+        "area:ml",
+        "points:3"
+      ],
+      "body": "As a clinical reviewer, I want AUC, accuracy, sensitivity at a fixed specificity and calibration on the untouched test split, with bootstrap confidence intervals, so that I know how far to trust a score.\n\n**Acceptance criteria**\n- [ ] temperature scaling fitted on validation only\n- [ ] effect of 8-way test-time augmentation measured\n- [ ] `reports/metrics.json` committed"
+    },
+    {
+      "title": "Export to ONNX with a parity check",
+      "milestone": "Sprint 1 - Data and model",
+      "labels": [
+        "story",
+        "area:ml",
+        "points:2"
+      ],
+      "body": "As a service owner, I want the model as ONNX with its maximum difference from TensorFlow measured, so that the Rust service runs the same model.\n\n**Acceptance criteria**\n- [ ] max absolute probability difference on the test split recorded"
+    },
+    {
+      "title": "Rust service: patch classification endpoint",
+      "milestone": "Sprint 2 - Rust inference service",
+      "labels": [
+        "story",
+        "area:rust",
+        "points:5"
+      ],
+      "body": "As a client application, I want to POST image patches and get probabilities, so that I can score patches without Python.\n\n**Acceptance criteria**\n- [ ] axum + ONNX Runtime, preprocessing identical to training (tested on fixtures)\n- [ ] API keys, body and image-size limits, structured errors"
+    },
+    {
+      "title": "Dynamic batching",
+      "milestone": "Sprint 2 - Rust inference service",
+      "labels": [
+        "story",
+        "area:rust",
+        "points:5"
+      ],
+      "body": "As an operator, I want concurrent requests merged into one model call up to a size or time limit, so that throughput scales with load.\n\n**Acceptance criteria**\n- [ ] batch size and wait configurable\n- [ ] throughput with and without batching measured"
+    },
+    {
+      "title": "Tile heatmap endpoint",
+      "milestone": "Sprint 2 - Rust inference service",
+      "labels": [
+        "story",
+        "area:rust",
+        "points:3"
+      ],
+      "body": "As a pathologist, I want a whole tile scored with a sliding window and returned as a heatmap, so that I can see where tumour is likely.\n\n**Acceptance criteria**\n- [ ] stride configurable, tile size limited\n- [ ] heatmap matches patch-by-patch scoring in a test"
+    },
+    {
+      "title": "Observability: metrics, JSON logs, health and readiness",
+      "milestone": "Sprint 2 - Rust inference service",
+      "labels": [
+        "story",
+        "area:rust",
+        "points:3"
+      ],
+      "body": "As an operator, I want Prometheus metrics, structured logs and readiness that waits for the model, so that I can run and alert on the service.\n\n**Acceptance criteria**\n- [ ] latency histograms, batch-size histogram, errors by kind\n- [ ] alert rules with promtool tests and a Grafana dashboard"
+    },
+    {
+      "title": "Python baseline service and comparison",
+      "milestone": "Sprint 2 - Rust inference service",
+      "labels": [
+        "spike",
+        "area:rust",
+        "points:3"
+      ],
+      "body": "As a reviewer, I want the same model served by FastAPI + onnxruntime and load-tested the same way, so that the choice of Rust is backed by numbers.\n\n**Acceptance criteria**\n- [ ] k6 at fixed rates against both, results committed"
+    },
+    {
+      "title": "JavaScript client library",
+      "milestone": "Sprint 3 - JavaScript viewer and client",
+      "labels": [
+        "story",
+        "area:web",
+        "points:3"
+      ],
+      "body": "As a front-end developer, I want a small JavaScript client with timeouts, retries and typed errors, so that apps call the service correctly.\n\n**Acceptance criteria**\n- [ ] plain JavaScript (ES modules, JSDoc types checked by tsc), no runtime dependencies\n- [ ] unit tests with a mocked server"
+    },
+    {
+      "title": "Slide viewer with tumour heatmaps",
+      "milestone": "Sprint 3 - JavaScript viewer and client",
+      "labels": [
+        "story",
+        "area:web",
+        "points:5"
+      ],
+      "body": "As a pathologist, I want to open a test slide region and see the model's heatmap over it, next to the ground-truth labels, so that I can judge the model visually.\n\n**Acceptance criteria**\n- [ ] plain JavaScript, canvas overlay, accessible controls\n- [ ] Playwright end-to-end test against the running stack"
+    },
+    {
+      "title": "One command to run the stack",
+      "milestone": "Sprint 4 - Release",
+      "labels": [
+        "chore",
+        "area:infra",
+        "points:2"
+      ],
+      "body": "As a reviewer, I want `make up` to start the service, the viewer, Prometheus and Grafana, so that I can try it in minutes.\n\n**Acceptance criteria**\n- [ ] smoke test in CI"
+    },
+    {
+      "title": "Load tests at fixed rates",
+      "milestone": "Sprint 4 - Release",
+      "labels": [
+        "chore",
+        "area:rust",
+        "points:2"
+      ],
+      "body": "As an engineer, I want k6 results for the patch and heatmap endpoints, so that capacity and the latency SLO are measured.\n\n**Acceptance criteria**\n- [ ] p50/p95/p99 and error rate committed per rate"
+    },
+    {
+      "title": "Terraform for Cloud Run",
+      "milestone": "Sprint 4 - Release",
+      "labels": [
+        "story",
+        "area:infra",
+        "points:3"
+      ],
+      "body": "As a platform engineer, I want the service, the model bucket and the image repository as code, so that it can be deployed on the free tier.\n\n**Acceptance criteria**\n- [ ] validate, tflint and trivy pass in CI; nothing applied without an account"
+    },
+    {
+      "title": "README, architecture, ADRs and model card",
+      "milestone": "Sprint 4 - Release",
+      "labels": [
+        "chore",
+        "area:docs",
+        "points:3"
+      ],
+      "body": "As a hiring manager, I want the problem, design, results and limits on one page.\n\n**Acceptance criteria**\n- [ ] every number links to a committed result file"
+    },
+    {
+      "title": "Deploy to Cloud Run once a GCP project exists",
+      "milestone": "Backlog",
+      "labels": [
+        "story",
+        "area:infra",
+        "blocked:account",
+        "points:2"
+      ],
+      "body": "Blocked on the owner creating a GCP project with billing. Steps are in docs/DEPLOY.md."
+    },
+    {
+      "title": "GitHub Projects board for the sprints",
+      "milestone": "Backlog",
+      "labels": [
+        "chore",
+        "blocked:account",
+        "points:1"
+      ],
+      "body": "The CLI token lacks the `project` scope. After `gh auth refresh -s project`, run `python scripts/agile/sync_backlog.py --board`."
+    },
+    {
+      "title": "Bug: the ONNX export turns EfficientNet's normalization constants into extra graph inputs",
+      "milestone": "Sprint 1 - Data and model",
+      "labels": [
+        "bug",
+        "area:ml",
+        "points:2"
+      ],
+      "body": "Found by a one-epoch smoke run before the real training: ONNX Runtime refused to run the exported model on images alone. Three converters (tf2onnx from_keras, from_function, Keras' own ONNX export) all did it.\n\n**Acceptance criteria**\n- [ ] the ONNX model has one input, `image`\n- [ ] parity with TensorFlow is checked on real patches, batched\n- [ ] a unit test exports a network and checks parity"
+    },
+    {
+      "title": "Choose the learning rate on the validation split only",
+      "milestone": "Sprint 1 - Data and model",
+      "labels": [
+        "story",
+        "area:ml",
+        "points:2"
+      ],
+      "body": "The first full run peaked after one epoch and then overfitted (validation AUC 0.963 -> 0.914 by epoch 4).\n\n**Acceptance criteria**\n- [ ] a mode that trains and scores validation without reading the test split\n- [ ] the candidates' results committed, and the test split scored once for the chosen one"
+    }
+  ]
+}
