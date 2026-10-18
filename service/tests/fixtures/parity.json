@@ -1,0 +1,98 @@
+[
+  {
+    "file": "patch-00.png",
+    "test_index": 4613,
+    "label": 0,
+    "probability": 0.04255650192499161
+  },
+  {
+    "file": "patch-01.png",
+    "test_index": 5014,
+    "label": 1,
+    "probability": 0.9752519130706787
+  },
+  {
+    "file": "patch-02.png",
+    "test_index": 5977,
+    "label": 0,
+    "probability": 0.09355371445417404
+  },
+  {
+    "file": "patch-03.png",
+    "test_index": 7972,
+    "label": 1,
+    "probability": 0.12519831955432892
+  },
+  {
+    "file": "patch-04.png",
+    "test_index": 8132,
+    "label": 0,
+    "probability": 0.541762113571167
+  },
+  {
+    "file": "patch-05.png",
+    "test_index": 8286,
+    "label": 0,
+    "probability": 0.032914549112319946
+  },
+  {
+    "file": "patch-06.png",
+    "test_index": 8800,
+    "label": 0,
+    "probability": 0.5960678458213806
+  },
+  {
+    "file": "patch-07.png",
+    "test_index": 10699,
+    "label": 1,
+    "probability": 0.9204229712486267
+  },
+  {
+    "file": "patch-08.png",
+    "test_index": 15066,
+    "label": 0,
+    "probability": 0.02830822952091694
+  },
+  {
+    "file": "patch-09.png",
+    "test_index": 16448,
+    "label": 0,
+    "probability": 0.0666118636727333
+  },
+  {
+    "file": "patch-10.png",
+    "test_index": 17463,
+    "label": 1,
+    "probability": 0.10281098634004593
+  },
+  {
+    "file": "patch-11.png",
+    "test_index": 18233,
+    "label": 1,
+    "probability": 0.9381030797958374
+  },
+  {
+    "file": "patch-12.png",
+    "test_index": 20951,
+    "label": 0,
+    "probability": 0.00043142068898305297
+  },
+  {
+    "file": "patch-13.png",
+    "test_index": 21780,
+    "label": 1,
+    "probability": 0.8953172564506531
+  },
+  {
+    "file": "patch-14.png",
+    "test_index": 23124,
+    "label": 1,
+    "probability": 0.945946455001831
+  },
+  {
+    "file": "patch-15.png",
+    "test_index": 28649,
+    "label": 1,
+    "probability": 0.9359545707702637
+  }
+]

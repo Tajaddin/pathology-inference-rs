@@ -1,0 +1,86 @@
+rule_files:
+  - alert_rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: 5xx above 1% fires
+    interval: 1m
+    input_series:
+      - series: 'pathology_requests_total{route="/v1/classify", status="200"}'
+        values: "0+200x15"
+      - series: 'pathology_requests_total{route="/v1/classify", status="503"}'
+        values: "0+5x15"
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: PathologyErrorRate
+        exp_alerts:
+          - exp_labels: { severity: critical }
+            exp_annotations:
+              summary: "More than 1% of inference requests fail with 5xx"
+              runbook: "docs/RUNBOOK.md#errors"
+
+  - name: healthy service raises nothing
+    interval: 1m
+    input_series:
+      - series: 'pathology_requests_total{route="/v1/classify", status="200"}'
+        values: "0+200x15"
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: PathologyErrorRate
+        exp_alerts: []
+
+  - name: classify p99 above 200 ms
+    interval: 1m
+    input_series:
+      - series: 'pathology_request_seconds_bucket{route="/v1/classify", le="0.1"}'
+        values: "0+50x30"
+      - series: 'pathology_request_seconds_bucket{route="/v1/classify", le="0.5"}'
+        values: "0+100x30"
+      - series: 'pathology_request_seconds_bucket{route="/v1/classify", le="+Inf"}'
+        values: "0+100x30"
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: PathologyClassifyLatency
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: "Patch classification p99 latency above 200 ms"
+              runbook: "docs/RUNBOOK.md#latency"
+
+  - name: queue wait
+    interval: 1m
+    input_series:
+      - series: 'pathology_queue_wait_seconds_bucket{le="0.01"}'
+        values: "0+10x30"
+      - series: 'pathology_queue_wait_seconds_bucket{le="0.1"}'
+        values: "0+100x30"
+      - series: 'pathology_queue_wait_seconds_bucket{le="+Inf"}'
+        values: "0+100x30"
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: PathologyQueueing
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: "Requests wait more than 50 ms for an inference worker (p95): add workers or replicas"
+              runbook: "docs/RUNBOOK.md#queueing"
+
+  - name: inference failures (503 unavailable) page after 2 minutes
+    interval: 1m
+    input_series:
+      - series: 'pathology_errors_total{code="unavailable"}'
+        values: "0 0 0 0 0+3x10"
+      - series: 'pathology_errors_total{code="invalid_request"}'
+        values: "0+50x14"
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: PathologyInferenceFailures
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: PathologyInferenceFailures
+        exp_alerts:
+          - exp_labels: { severity: critical }
+            exp_annotations:
+              summary: "Inference is failing or timing out; requests get 503"
+              runbook: "docs/RUNBOOK.md#errors"
