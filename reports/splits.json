@@ -1,0 +1,20 @@
+[
+  {
+    "split": "train",
+    "patches": 262144,
+    "positive_share": 0.5,
+    "slides": 216
+  },
+  {
+    "split": "valid",
+    "patches": 32768,
+    "positive_share": 0.499542236328125,
+    "slides": 54
+  },
+  {
+    "split": "test",
+    "patches": 32768,
+    "positive_share": 0.499786376953125,
+    "slides": 129
+  }
+]

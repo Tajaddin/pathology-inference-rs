@@ -1,0 +1,56 @@
+[project]
+name = "pcam-training"
+version = "0.1.0"
+description = "TensorFlow training, held-out evaluation and ONNX export for the PatchCamelyon patch classifier"
+requires-python = ">=3.12,<3.13"
+license = "MIT"
+authors = [{ name = "Tajaddin Gafarov", email = "gafarovtajaddin@gmail.com" }]
+dependencies = [
+  "numpy>=2.2,<2.3",
+  "h5py>=3.14",
+  "scikit-learn>=1.7",
+  "pillow>=11",
+  "matplotlib>=3.10",
+  "onnx>=1.19",
+  "onnxruntime>=1.23",
+]
+
+[project.optional-dependencies]
+# GPU training in WSL/Linux (CUDA libraries come as wheels); CPU-only CI uses tensorflow-cpu.
+gpu = ["tensorflow[and-cuda]==2.21.0", "tf2onnx==1.17.0"]
+cpu = ["tensorflow-cpu==2.21.0", "tf2onnx==1.17.0"]
+baseline = ["fastapi>=0.120", "uvicorn[standard]>=0.38", "prometheus-client>=0.23"]
+dev = ["pytest>=8.4", "pytest-cov>=7", "ruff>=0.14", "mypy>=1.18", "httpx>=0.28", "pip-audit>=2.9"]
+
+[tool.uv]
+conflicts = [[{ extra = "gpu" }, { extra = "cpu" }]]
+environments = ["sys_platform == 'linux'"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["pcam"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "N", "S", "W", "PL", "RUF", "SIM", "C4", "PT"]
+ignore = ["PLR0913", "PLR2004", "S101", "S311", "S603", "E501", "PLR0915", "PLC0415", "PLR0912", "N812"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S", "PLR"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+check_untyped_defs = true
+files = ["pcam"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+markers = ["tf: needs TensorFlow"]
