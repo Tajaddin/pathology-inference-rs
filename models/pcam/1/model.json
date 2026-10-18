@@ -1,0 +1,7 @@
+{
+  "version": "1",
+  "input_name": "image",
+  "output_name": "output_0",
+  "temperature": 1.5280296976321612,
+  "threshold": 0.5
+}
