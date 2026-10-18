@@ -1,0 +1,46 @@
+[package]
+name = "pathology-service"
+version = "0.1.0"
+description = "Lymph-node metastasis patch classifier and tile heatmaps over ONNX Runtime, with dynamic batching"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow = "1.0.104"
+axum = { version = "0.8.9", features = ["macros"] }
+base64 = "0.23.1"
+governor = "0.10.4"
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg"] }
+metrics = "0.24.6"
+metrics-exporter-prometheus = { version = "0.18.3", default-features = false }
+ndarray = "0.17.2"
+ort = { version = "=2.0.0-rc.14", default-features = false, features = ["std", "ndarray", "download-binaries", "copy-dylibs", "tls-rustls", "tracing", "api-22"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+subtle = "2.6.1"
+thiserror = "2.0.21"
+tokio = { version = "1.53.3", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
+tower = "0.5.3"
+tower-http = { version = "0.7.1", features = ["cors", "limit", "trace", "timeout"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
+
+[dev-dependencies]
+criterion = { version = "0.8.2", default-features = false }
+http-body-util = "0.1.5"
+
+[[bench]]
+name = "pipeline"
+harness = false
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+cast_precision_loss = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"

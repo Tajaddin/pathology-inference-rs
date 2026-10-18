@@ -1,0 +1,15 @@
+[workspace]
+resolver = "3"
+members = ["service"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.92"
+license = "MIT"
+authors = ["Tajaddin Gafarov <gafarovtajaddin@gmail.com>"]
+repository = "https://github.com/Tajaddin/pathology-inference-rs"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
