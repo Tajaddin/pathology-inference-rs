@@ -13,7 +13,7 @@ flowchart LR
     O -->|"model.onnx + model.json"| S
 
     subgraph Serve["service/ (Rust, axum + ONNX Runtime)"]
-        S["HTTP API<br/>keys, rate limit, validation"] --> B["dynamic batcher<br/>bounded queue"]
+        S["HTTP API<br/>keys, rate limit, validation"] --> B["dynamic batcher<br/>admission, in-flight budget"]
         B --> W1["worker 1<br/>own session"] & W2["worker N<br/>own session"]
     end
 

@@ -218,19 +218,26 @@ impl Batcher {
             "a request holds 1..={} patches, got {n}",
             self.max_pending
         );
+        let started = Instant::now();
         let room = Arc::clone(&self.pending).acquire_many_owned(u32::try_from(n)?);
-        let room = tokio::time::timeout(self.admit_timeout, room)
-            .await
+        let room = tokio::time::timeout(self.admit_timeout, room).await;
+        metrics::histogram!("pathology_admission_wait_seconds")
+            .record(started.elapsed().as_secs_f64());
+        let room = room
             .map_err(|_| anyhow::Error::new(Overloaded))?
             .map_err(|_| anyhow!("batcher stopped"))?;
         Ok(Admission { room, n })
     }
 
     async fn acquire(&self, n: usize) -> Result<OwnedSemaphorePermit> {
-        Arc::clone(&self.budget)
+        let started = Instant::now();
+        let permit = Arc::clone(&self.budget)
             .acquire_many_owned(u32::try_from(n)?)
             .await
-            .map_err(|_| anyhow!("batcher stopped"))
+            .map_err(|_| anyhow!("batcher stopped"));
+        metrics::histogram!("pathology_budget_wait_seconds")
+            .record(started.elapsed().as_secs_f64());
+        permit
     }
 
     async fn submit(
@@ -250,7 +257,6 @@ impl Batcher {
             })
             .await
             .map_err(|_| anyhow!("batcher stopped"))?;
-        metrics::gauge!("pathology_queue_capacity").set(self.tx.capacity() as f64);
         Ok(rx)
     }
 }
@@ -603,6 +609,50 @@ mod tests {
             batcher.admit(65).await.is_err(),
             "larger than the pending limit"
         );
+    }
+
+    /// The `_sum` of a histogram in a Prometheus rendering, in seconds.
+    fn seconds_waited(text: &str, name: &str) -> f64 {
+        let prefix = format!("{name}_sum ");
+        text.lines()
+            .find_map(|line| line.strip_prefix(prefix.as_str()))
+            .map_or(0.0, |v| v.parse().unwrap())
+    }
+
+    #[tokio::test]
+    async fn waits_for_admission_and_for_the_budget_are_measured() {
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let prometheus = recorder.handle();
+        let _local = metrics::set_default_local_recorder(&recorder);
+        let batcher = Batcher::spawn(
+            BatchConfig {
+                max_pending_patches: 4,
+                admit_timeout: Duration::from_millis(30),
+                ..config(4, 1, 4)
+            },
+            |_| Ok(Box::new(FakeClassifier) as Box<dyn Classifier>),
+        )
+        .unwrap();
+        let room = batcher.admit(4).await.unwrap();
+        assert!(batcher.admit(1).await.is_err());
+        drop(room);
+        let budget = batcher.acquire(4).await.unwrap();
+        let b = batcher.clone();
+        let scoring = tokio::spawn(async move { b.predict(patch(1.0), 1).await });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        drop(budget);
+        scoring.await.unwrap().unwrap();
+
+        let text = prometheus.render();
+        assert!(
+            seconds_waited(&text, "pathology_admission_wait_seconds") >= 0.03,
+            "{text}"
+        );
+        assert!(
+            seconds_waited(&text, "pathology_budget_wait_seconds") >= 0.05,
+            "{text}"
+        );
+        assert!(!text.contains("pathology_queue_capacity"), "{text}");
     }
 
     #[test]

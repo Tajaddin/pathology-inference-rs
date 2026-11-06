@@ -23,7 +23,8 @@ one or a few patches per request. ONNX Runtime sessions in ort 2.0 need exclusiv
   room within `ADMIT_TIMEOUT_MS` is refused with 503 `overloaded` and `Retry-After: 1`, and an admitted request
   waits behind at most that much work. One that times out at 20 s or whose client disconnects has its queued
   jobs dropped unscored.
-- Metrics expose batch size, queue wait and model time, and an alert fires when queue wait grows.
+- Metrics expose batch size, model time and the three waits (for admission, for budget, for a worker), and an
+  alert fires when the wait for a worker grows.
 
 ## Consequences
 

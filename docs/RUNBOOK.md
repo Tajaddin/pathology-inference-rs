@@ -22,8 +22,10 @@ which is not published: Cloud Run routes only port 8080, and compose leaves it o
 
 **PathologyClassifyLatency**: `/v1/classify` p99 above 200 ms for 10 minutes.
 
-- If `pathology_queue_wait_seconds` is high too, the workers are saturated: see Queueing.
-- If queue wait is low but `pathology_inference_seconds` grew, batches got larger (`pathology_batch_size`) or the
+- A request waits in three places, each with a histogram: for admission (`pathology_admission_wait_seconds`, per
+  request; see Overload), then each job for in-flight budget (`pathology_budget_wait_seconds`) and for a worker
+  (`pathology_queue_wait_seconds`). If any of them is high too, the workers are saturated: see Queueing.
+- If the waits are low but `pathology_inference_seconds` grew, batches got larger (`pathology_batch_size`) or the
   instance has fewer CPUs than `WORKERS x INTRA_THREADS` assumes. Keep `WORKERS x INTRA_THREADS` at or below the
   CPU count.
 - `pathology_decode_seconds` high means clients send large or slow-to-decode images (JPEG at 96x96 is cheap).
@@ -32,13 +34,16 @@ which is not published: Cloud Run routes only port 8080, and compose leaves it o
 
 **PathologyQueueing**: p95 wait for a worker above 50 ms. Throughput is capped by CPU: add workers (when CPUs
 are idle), add replicas (Cloud Run scales on concurrency), or lower `MAX_WAIT_US` if traffic is light and the
-wait is the batching window itself.
+wait is the batching window itself. The in-flight budget caps how much work can queue for a worker, so as load
+grows the wait moves to the budget and then to admission: check those histograms before reading a flat queue
+wait as spare capacity.
 
 ## Overload
 
 `503` with code `overloaded` and `Retry-After: 1`: the admitted work (`MAX_PENDING_PATCHES`) stayed full for
 `ADMIT_TIMEOUT_MS`, so the request was refused before any work was done. It shows in `pathology_errors_total`
-with `code="overloaded"` and in the 5xx rate. Add replicas or workers as for Queueing. Under overload an admitted
+with `code="overloaded"`, in the 5xx rate, and as `pathology_admission_wait_seconds` near `ADMIT_TIMEOUT_MS`.
+Add replicas or workers as for Queueing. Under overload an admitted
 request waits about `MAX_PENDING_PATCHES` divided by the patches scored per second; lower it (with
 `MAX_WINDOWS_PER_REQUEST`, which it must not be below) to answer sooner. `MAX_INFLIGHT_PATCHES` bounds memory
 instead: each patch is 108 KiB of model inputs.
