@@ -36,15 +36,18 @@ wait is the batching window itself.
 
 ## Overload
 
-`503` with code `overloaded` and `Retry-After: 1`: the in-flight budget (`MAX_INFLIGHT_PATCHES`) stayed full for
+`503` with code `overloaded` and `Retry-After: 1`: the admitted work (`MAX_PENDING_PATCHES`) stayed full for
 `ADMIT_TIMEOUT_MS`, so the request was refused before any work was done. It shows in `pathology_errors_total`
-with `code="overloaded"` and in the 5xx rate. Add replicas or workers as for Queueing. Raise the budget only if
-memory allows: each patch of budget is 108 KiB of model inputs.
+with `code="overloaded"` and in the 5xx rate. Add replicas or workers as for Queueing. Under overload an admitted
+request waits about `MAX_PENDING_PATCHES` divided by the patches scored per second; lower it (with
+`MAX_WINDOWS_PER_REQUEST`, which it must not be below) to answer sooner. `MAX_INFLIGHT_PATCHES` bounds memory
+instead: each patch is 108 KiB of model inputs.
 
 ## Rate limiting
 
 `429` with `Retry-After` is the per-client limit (`RATE_LIMIT_PER_MINUTE`, counted in patches, so a 64-patch
-request costs 64). Clients in `CLIENT_LIMITS` (the viewer) have their own quota and heatmap window cap instead. `pathology_rate_limited_total` by client shows who hits it.
+request costs 64). Clients in `CLIENT_LIMITS` (the viewer) have their own quota and heatmap window cap instead.
+`pathology_rate_limited_total` by client shows who hits it.
 
 ## Rolling out a model
 

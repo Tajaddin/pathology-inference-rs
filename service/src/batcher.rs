@@ -9,8 +9,11 @@
 //! before it lays out the job's inputs, and the permits come back when the job is dropped, so queued and running
 //! jobs never hold more than that many patches of inputs, however many requests arrive.
 //!
-//! Overload is refused rather than queued: a request whose first job gets no permits within `admit_timeout` fails
-//! with [`Overloaded`]. Jobs whose caller has gone (a timeout or a closed connection) are dropped unscored.
+//! Overload is refused rather than queued. A request first reserves all of its patches among
+//! `max_pending_patches`, the work admitted but not yet answered, and fails with [`Overloaded`] if there is no room
+//! within `admit_timeout`. An admitted request therefore waits behind at most that much work, whatever its size,
+//! and is never cut off halfway. Jobs whose caller has gone (a timeout or a closed connection) are dropped
+//! unscored.
 
 use std::ops::Range;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -58,11 +61,13 @@ pub struct BatchConfig {
     pub workers: usize,
     /// Patches whose inputs may be queued or running at once; each costs `PATCH_LEN` floats.
     pub max_inflight_patches: usize,
-    /// How long a new request may wait for room in the budget before it is refused.
+    /// Patches of admitted requests not yet answered; no request may be larger.
+    pub max_pending_patches: usize,
+    /// How long a new request may wait for room among the pending patches before it is refused.
     pub admit_timeout: Duration,
 }
 
-/// The budget had no room for a new request within `admit_timeout`.
+/// There was no room for a new request among the pending patches within `admit_timeout`.
 #[derive(Debug, thiserror::Error)]
 #[error("the service is at capacity; retry shortly")]
 pub struct Overloaded;
@@ -71,6 +76,8 @@ pub struct Overloaded;
 pub struct Batcher {
     tx: mpsc::Sender<Job>,
     budget: Arc<Semaphore>,
+    pending: Arc<Semaphore>,
+    max_pending: usize,
     max_batch: usize,
     admit_timeout: Duration,
     workers: usize,
@@ -98,6 +105,12 @@ impl Batcher {
             config.max_inflight_patches,
             config.max_batch
         );
+        anyhow::ensure!(
+            config.max_pending_patches >= config.max_batch,
+            "the pending limit ({}) must hold at least one full batch ({})",
+            config.max_pending_patches,
+            config.max_batch
+        );
         // Every queued job holds at least one permit, so the queue cannot fill before the budget does.
         let (tx, rx) = mpsc::channel::<Job>(config.max_inflight_patches);
         let (batch_tx, batch_rx) = std_mpsc::sync_channel::<Batch>(config.workers * 2);
@@ -119,6 +132,8 @@ impl Batcher {
         Ok(Self {
             tx,
             budget: Arc::new(Semaphore::new(config.max_inflight_patches)),
+            pending: Arc::new(Semaphore::new(config.max_pending_patches)),
+            max_pending: config.max_pending_patches,
             max_batch: config.max_batch,
             admit_timeout: config.admit_timeout,
             workers: config.workers,
@@ -149,7 +164,8 @@ impl Batcher {
             "job has {} values for {n} patches",
             inputs.len()
         );
-        let permit = self.admit(n).await?;
+        let _admitted = self.admit(n).await?;
+        let permit = self.acquire(n).await?;
         let reply = self.submit(permit, inputs, n).await?;
         reply.await.map_err(|_| anyhow!("worker dropped the job"))?
     }
@@ -164,16 +180,12 @@ impl Batcher {
         F: FnMut(Range<usize>) -> Vec<f32>,
     {
         anyhow::ensure!(n > 0, "nothing to score");
+        let _admitted = self.admit(n).await?;
         let mut replies = Vec::with_capacity(n.div_ceil(self.max_batch));
         for start in (0..n).step_by(self.max_batch) {
             let range = start..n.min(start + self.max_batch);
             let k = range.len();
-            // Only the first job of a request can be refused; once started, the rest wait their turn.
-            let permit = if start == 0 {
-                self.admit(k).await?
-            } else {
-                self.acquire(k).await?
-            };
+            let permit = self.acquire(k).await?;
             let inputs = build(range);
             anyhow::ensure!(
                 inputs.len() == k * PATCH_LEN,
@@ -193,10 +205,18 @@ impl Batcher {
         Ok(out)
     }
 
+    /// Reserve room for a whole request among the pending patches.
     async fn admit(&self, n: usize) -> Result<OwnedSemaphorePermit> {
-        tokio::time::timeout(self.admit_timeout, self.acquire(n))
+        anyhow::ensure!(
+            n <= self.max_pending,
+            "{n} patches is more than the {} that may be pending",
+            self.max_pending
+        );
+        let room = Arc::clone(&self.pending).acquire_many_owned(u32::try_from(n)?);
+        tokio::time::timeout(self.admit_timeout, room)
             .await
             .map_err(|_| anyhow::Error::new(Overloaded))?
+            .map_err(|_| anyhow!("batcher stopped"))
     }
 
     async fn acquire(&self, n: usize) -> Result<OwnedSemaphorePermit> {
@@ -356,6 +376,7 @@ mod tests {
             max_wait: Duration::from_millis(1),
             workers,
             max_inflight_patches,
+            max_pending_patches: 1024,
             admit_timeout: Duration::from_secs(1),
         }
     }
@@ -472,19 +493,21 @@ mod tests {
             "{at_cancel} batches had run when the caller left, {after} in the end"
         );
         assert_eq!(batcher.budget.available_permits(), 1024);
+        assert_eq!(batcher.pending.available_permits(), 1024);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn requests_are_refused_when_the_budget_stays_full() {
+    async fn requests_are_refused_when_the_pending_work_stays_full() {
         let batcher = Batcher::spawn(
             BatchConfig {
+                max_pending_patches: 8,
                 admit_timeout: Duration::from_millis(20),
                 ..config(8, 1, 8)
             },
             |_| Ok(Box::new(FakeClassifier) as Box<dyn Classifier>),
         )
         .unwrap();
-        let held = batcher.acquire(8).await.unwrap();
+        let held = batcher.admit(8).await.unwrap();
         let started = Instant::now();
         let err = batcher.predict(patch(1.0), 1).await.unwrap_err();
         assert!(err.is::<Overloaded>(), "{err}");
@@ -538,6 +561,39 @@ mod tests {
         assert!(batcher.predict(patch(1.0), 1).await.is_err());
         tokio::time::sleep(Duration::from_millis(50)).await;
         assert!(!batcher.healthy());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_admitted_request_is_not_held_back_by_later_arrivals() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let c = Arc::clone(&calls);
+        let batcher = Batcher::spawn(
+            BatchConfig {
+                max_pending_patches: 64,
+                admit_timeout: Duration::from_millis(20),
+                ..config(8, 1, 8)
+            },
+            move |_| Ok(Box::new(Slow(Arc::clone(&c))) as Box<dyn Classifier>),
+        )
+        .unwrap();
+        let b = batcher.clone();
+        // Eight jobs at 10 ms each, through a budget that holds only one of them at a time.
+        let large = tokio::spawn(async move {
+            b.predict_chunked(64, |range| vec![1.0; range.len() * PATCH_LEN])
+                .await
+        });
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        let err = batcher.predict(patch(1.0), 1).await.unwrap_err();
+        assert!(err.is::<Overloaded>(), "{err}");
+        assert_eq!(large.await.unwrap().unwrap().len(), 64);
+        assert_eq!(calls.load(Ordering::SeqCst), 8);
+        assert!(
+            batcher
+                .predict_chunked(65, |range| vec![1.0; range.len() * PATCH_LEN])
+                .await
+                .is_err(),
+            "larger than the pending limit"
+        );
     }
 
     #[test]

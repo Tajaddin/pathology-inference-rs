@@ -25,7 +25,9 @@ pub struct Config {
     pub intra_threads: usize,
     /// Patches whose model inputs may be queued or running at once (about 108 KiB each).
     pub max_inflight_patches: usize,
-    /// How long a request may wait for room in that budget before it is refused with 503.
+    /// Patches of admitted requests not yet answered: bounds how long an admitted request can wait.
+    pub max_pending_patches: usize,
+    /// How long a request may wait for room among those before it is refused with 503.
     pub admit_timeout: Duration,
     pub max_patches_per_request: usize,
     pub max_windows_per_request: usize,
@@ -91,7 +93,7 @@ impl Config {
         let cpus = std::thread::available_parallelism().map_or(4, std::num::NonZero::get);
         let workers: usize = num("WORKERS", "2")?;
         let api_keys = parse_keys(&var("API_KEYS", ""))?;
-        Ok(Self {
+        let config = Self {
             client_limits: parse_client_limits(&var("CLIENT_LIMITS", ""), &api_keys)?,
             port: num("PORT", "8080")?,
             metrics_port: num("METRICS_PORT", "9464")?,
@@ -104,6 +106,7 @@ impl Config {
             workers,
             intra_threads: num("INTRA_THREADS", &(cpus / workers.max(1)).max(1).to_string())?,
             max_inflight_patches: num("MAX_INFLIGHT_PATCHES", "512")?,
+            max_pending_patches: num("MAX_PENDING_PATCHES", "4096")?,
             admit_timeout: Duration::from_millis(num("ADMIT_TIMEOUT_MS", "1000")?),
             max_patches_per_request: num("MAX_PATCHES_PER_REQUEST", "64")?,
             // 2048 px at the minimum stride of 32 is 62 x 62 = 3,844 windows.
@@ -119,7 +122,17 @@ impl Config {
             .filter(|s| !s.is_empty())
             .map(String::from)
             .collect(),
-        })
+        };
+        if config.max_pending_patches
+            < config
+                .max_windows_per_request
+                .max(config.max_patches_per_request)
+        {
+            bail!(
+                "MAX_PENDING_PATCHES must be at least MAX_WINDOWS_PER_REQUEST and MAX_PATCHES_PER_REQUEST"
+            );
+        }
+        Ok(config)
     }
 }
 

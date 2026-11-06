@@ -47,6 +47,7 @@ async fn rust_service_matches_python_onnxruntime() {
             max_wait: Duration::from_millis(1),
             workers: 1,
             max_inflight_patches: 8,
+            max_pending_patches: 64,
             admit_timeout: Duration::from_secs(1),
         },
         move |_| {

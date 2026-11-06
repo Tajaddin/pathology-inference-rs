@@ -24,6 +24,7 @@ fn app() -> axum::Router {
             max_wait: Duration::from_millis(1),
             workers: 1,
             max_inflight_patches: 8,
+            max_pending_patches: 64,
             admit_timeout: Duration::from_secs(1),
         },
         |_| Ok(Box::new(FakeClassifier) as Box<dyn Classifier>),

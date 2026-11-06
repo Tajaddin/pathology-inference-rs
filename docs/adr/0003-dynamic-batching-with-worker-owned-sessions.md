@@ -18,9 +18,11 @@ one or a few patches per request. ONNX Runtime sessions in ort 2.0 need exclusiv
 - Back-pressure: when every worker is busy the collector blocks and jobs wait in the queue. The queue alone did
   not bound memory (a 2048 px heatmap laid out all 3,844 windows, 425 MB, before queueing), so every job now
   takes permits from an in-flight budget counted in patches (`MAX_INFLIGHT_PATCHES`) before its inputs are laid
-  out, and gives them back when it is done. A request that gets no room within `ADMIT_TIMEOUT_MS` is refused
-  with 503 `overloaded` and `Retry-After: 1`; one that times out at 20 s or whose client disconnects has its
-  queued jobs dropped unscored.
+  out, and gives them back when it is done. Callers did not wait a bounded time either, so a request now first
+  reserves all of its patches among `MAX_PENDING_PATCHES` (work admitted but not yet answered); one that gets no
+  room within `ADMIT_TIMEOUT_MS` is refused with 503 `overloaded` and `Retry-After: 1`, and an admitted request
+  waits behind at most that much work. One that times out at 20 s or whose client disconnects has its queued
+  jobs dropped unscored.
 - Metrics expose batch size, queue wait and model time, and an alert fires when queue wait grows.
 
 ## Consequences

@@ -42,6 +42,7 @@ async fn main() -> Result<()> {
             max_wait: config.max_wait,
             workers: config.workers,
             max_inflight_patches: config.max_inflight_patches,
+            max_pending_patches: config.max_pending_patches,
             admit_timeout: config.admit_timeout,
         },
         move |_| {

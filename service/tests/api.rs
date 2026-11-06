@@ -36,6 +36,7 @@ fn app(per_minute: u32) -> axum::Router {
             max_wait: Duration::from_millis(1),
             workers: 2,
             max_inflight_patches: 64,
+            max_pending_patches: 64,
             admit_timeout: Duration::from_secs(1),
         },
         |_| Ok(Box::new(FakeClassifier) as Box<dyn Classifier>),
@@ -239,6 +240,7 @@ async fn a_client_with_its_own_limits_gets_a_lower_tile_cap() {
             max_wait: Duration::from_millis(1),
             workers: 1,
             max_inflight_patches: 64,
+            max_pending_patches: 64,
             admit_timeout: Duration::from_secs(1),
         },
         |_| Ok(Box::new(FakeClassifier) as Box<dyn Classifier>),
@@ -300,13 +302,14 @@ async fn overload_is_refused_with_503_and_retry_after() {
             max_wait: Duration::from_millis(1),
             workers: 1,
             max_inflight_patches: 8,
+            max_pending_patches: 8,
             admit_timeout: Duration::from_millis(20),
         },
         |_| Ok(Box::new(Slow) as Box<dyn Classifier>),
     )
     .unwrap();
     let app = app_with(batcher, 6000);
-    // Eight windows fill the whole budget for 300 ms.
+    // Eight windows fill all the room for pending work for 300 ms.
     let tile = RgbImage::from_pixel(432, 96, Rgb([9, 9, 9]));
     let busy = tokio::spawn(post(
         app.clone(),
@@ -345,6 +348,7 @@ async fn health_and_ready_fail_once_a_worker_dies() {
             max_wait: Duration::from_millis(1),
             workers: 1,
             max_inflight_patches: 8,
+            max_pending_patches: 64,
             admit_timeout: Duration::from_secs(1),
         },
         |_| Ok(Box::new(Panicking) as Box<dyn Classifier>),
