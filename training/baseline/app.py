@@ -40,12 +40,16 @@ class ClassifyRequest(BaseModel):
 
 def decode(b64: str) -> np.ndarray:
     try:
-        img = Image.open(io.BytesIO(base64.b64decode(b64, validate=True))).convert("RGB")
+        img = Image.open(io.BytesIO(base64.b64decode(b64, validate=True)))
     except Exception as exc:
         raise HTTPException(status_code=422, detail="unreadable image") from exc
+    # Image.open reads only the header, so other sizes are refused before any pixel is decoded.
     if img.size != (96, 96):
         raise HTTPException(status_code=422, detail="patches must be 96x96")
-    return np.asarray(img, dtype=np.float32)
+    try:
+        return np.asarray(img.convert("RGB"), dtype=np.float32)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail="unreadable image") from exc
 
 
 @app.get("/health")
