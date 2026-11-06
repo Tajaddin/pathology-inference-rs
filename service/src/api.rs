@@ -302,7 +302,9 @@ pub fn router(state: Arc<AppState>, auth: Arc<Auth>, cors_origins: &[String]) ->
             axum::http::header::CONTENT_TYPE,
             axum::http::header::AUTHORIZATION,
             axum::http::HeaderName::from_static("x-api-key"),
-        ]);
+        ])
+        // So the viewer's client can wait as long as a 429 or 503 asks instead of its own shorter backoff.
+        .expose_headers([axum::http::header::RETRY_AFTER]);
     Router::new()
         .merge(protected)
         .route("/health", get(health))

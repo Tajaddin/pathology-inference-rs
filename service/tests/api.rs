@@ -297,7 +297,9 @@ async fn rate_limit_counts_patches_and_sets_retry_after() {
     let one = json!({"patches": [{"image_base64": png(&flat(96, 1))}, {"image_base64": png(&flat(96, 1))}]});
     let (status, _) = post(app.clone(), "/v1/classify", one.clone(), Some(KEY)).await;
     assert_eq!(status, StatusCode::OK);
+    // From the viewer's origin: the browser hides Retry-After unless CORS exposes it.
     let req = Request::post("/v1/classify")
+        .header("origin", "http://localhost:5173")
         .header("content-type", "application/json")
         .header("x-api-key", KEY)
         .body(Body::from(one.to_string()))
@@ -305,6 +307,10 @@ async fn rate_limit_counts_patches_and_sets_retry_after() {
     let res = app.oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::TOO_MANY_REQUESTS);
     assert!(res.headers().get("retry-after").is_some());
+    assert_eq!(
+        res.headers().get("access-control-expose-headers").unwrap(),
+        "retry-after"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
