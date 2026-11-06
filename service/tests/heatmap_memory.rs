@@ -2,8 +2,8 @@
 //!
 //! A 2048x2048 tile at stride 32 has 3,844 windows: 425 MB of model inputs if they were laid out at once. The
 //! service lays them out one batch at a time under the in-flight budget, so the peak is the decoded tiles plus
-//! that budget, however many requests run together; and a request waiting for admission has not decoded its tile
-//! yet.
+//! that budget and the batch each worker copies its jobs into, however many requests run together; and a request
+//! waiting for admission has not decoded its tile yet.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::Arc;
@@ -54,6 +54,16 @@ const BUDGET: usize = 512;
 const MAX_BATCH: usize = 32;
 const WORKERS: usize = 2;
 
+/// The fake model, slowed so that (in release builds) windows are laid out faster than they are scored and the
+/// budget fills, as it does with the real model.
+struct Paced;
+impl Classifier for Paced {
+    fn predict(&mut self, batch: &[f32], n: usize) -> anyhow::Result<Vec<f32>> {
+        std::thread::sleep(Duration::from_millis(2));
+        FakeClassifier.predict(batch, n)
+    }
+}
+
 fn app(budget: usize, max_pending_patches: usize) -> axum::Router {
     let batcher = Batcher::spawn(
         BatchConfig {
@@ -64,7 +74,7 @@ fn app(budget: usize, max_pending_patches: usize) -> axum::Router {
             max_pending_patches,
             admit_timeout: Duration::from_mins(1),
         },
-        |_| Ok(Box::new(FakeClassifier) as Box<dyn Classifier>),
+        |_| Ok(Box::new(Paced) as Box<dyn Classifier>),
     )
     .unwrap();
     let state = Arc::new(AppState {

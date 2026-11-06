@@ -7,7 +7,8 @@
 //!
 //! Memory is bounded by a budget counted in patches (`max_inflight_patches`): a caller takes permits for a job
 //! before it lays out the job's inputs, and the permits come back when the job is dropped, so queued and running
-//! jobs never hold more than that many patches of inputs, however many requests arrive.
+//! jobs never hold more than that many patches of inputs, however many requests arrive. Each worker also copies
+//! the batch it runs into one input of up to `max_batch` patches.
 //!
 //! Overload is refused rather than queued. A request first reserves all of its patches among
 //! `max_pending_patches`, the work admitted but not yet answered, and fails with [`Overloaded`] if there is no room
