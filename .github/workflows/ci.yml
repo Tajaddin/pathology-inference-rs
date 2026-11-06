@@ -202,7 +202,8 @@ jobs:
           assert abs(p - fx["probability"]) < 1e-4, (p, fx["probability"])
           print("probability", p, "expected", fx["probability"])
           EOF
-          curl -fsS http://localhost:8080/metrics | grep -q pathology_requests_total
+          docker compose exec -T service curl -fsS http://127.0.0.1:9464/metrics | grep -q pathology_requests_total
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/metrics)" != 200
           curl -fsS http://localhost:8088 | grep -q "Lymph node"
           for _ in $(seq 1 20); do
             curl -fsS 'http://localhost:9097/api/v1/query?query=up%7Bjob%3D%22service%22%7D' | grep -q '"1"\]' && exit 0; sleep 3

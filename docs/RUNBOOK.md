@@ -1,7 +1,8 @@
 # Runbook
 
 Alerts in `observability/alert_rules.yml` (Prometheus, local stack) and `infra/terraform/cicd_and_cost.tf` (Cloud
-Monitoring, GCP) link here. Metrics come from the service's `/metrics`.
+Monitoring, GCP) link here. Metrics come from the service's `/metrics` on the internal port `METRICS_PORT` (9464),
+which is not published: Cloud Run routes only port 8080, and compose leaves it on the internal network.
 
 ## Errors
 

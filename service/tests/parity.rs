@@ -6,8 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use pathology_service::batcher::{BatchConfig, Batcher};
-use pathology_service::imaging::PATCH_LEN;
-use pathology_service::imaging::{decode_rgb, push_patch};
+use pathology_service::imaging::{PATCH_LEN, decode_rgb, push_patch};
 use pathology_service::model::{Classifier, ModelMeta, OnnxClassifier};
 use serde::Deserialize;
 

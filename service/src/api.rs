@@ -3,14 +3,16 @@
 //! POST /v1/classify   1-64 base64 PNG/JPEG patches (96x96)  -> calibrated probability per patch
 //! POST /v1/heatmap    one tile up to `MAX_TILE_SIDE` pixels    -> sliding-window probabilities (row-major)
 //! GET  /v1/model      model version, threshold, temperature
-//! GET  /health        liveness;  GET /ready  model loaded and warmed up;  GET /metrics  Prometheus
+//! GET  /health        liveness;  GET /ready  model loaded and warmed up
+//!
+//! Prometheus metrics are served by [`metrics_router`] on a separate, internal port.
 
 use std::ops::Range;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use axum::extract::{DefaultBodyLimit, Extension, State};
+use axum::extract::{DefaultBodyLimit, Extension, MatchedPath, State};
 use axum::http::{HeaderValue, Method, StatusCode};
 use axum::routing::{get, post};
 use axum::{Json, Router, middleware};
@@ -37,7 +39,6 @@ pub struct AppState {
     pub max_windows: usize,
     pub max_tile_side: u32,
     pub min_stride: u32,
-    pub prometheus: Option<PrometheusHandle>,
 }
 
 #[derive(Deserialize)]
@@ -216,25 +217,34 @@ async fn ready(State(state): State<Arc<AppState>>) -> (StatusCode, &'static str)
     }
 }
 
-async fn render_metrics(State(state): State<Arc<AppState>>) -> String {
-    state
-        .prometheus
-        .as_ref()
-        .map(PrometheusHandle::render)
-        .unwrap_or_default()
+async fn render_metrics(State(prometheus): State<PrometheusHandle>) -> String {
+    prometheus.render()
+}
+
+/// `/metrics` alone, for a port that is not exposed to callers.
+pub fn metrics_router(prometheus: PrometheusHandle) -> Router {
+    Router::new()
+        .route("/metrics", get(render_metrics))
+        .with_state(prometheus)
 }
 
 async fn track(req: axum::extract::Request, next: middleware::Next) -> axum::response::Response {
-    let route = req.uri().path().to_string();
+    if !req.uri().path().starts_with("/v1/") {
+        return next.run(req).await;
+    }
+    // Label by route template, never the raw path, so arbitrary URLs cannot create new series.
+    let route = req
+        .extensions()
+        .get::<MatchedPath>()
+        .map_or("unmatched", MatchedPath::as_str)
+        .to_owned();
     let started = Instant::now();
     let response = next.run(req).await;
-    if route.starts_with("/v1/") {
-        let status = response.status().as_u16().to_string();
-        metrics::histogram!("pathology_request_seconds", "route" => route.clone())
-            .record(started.elapsed().as_secs_f64());
-        metrics::counter!("pathology_requests_total", "route" => route, "status" => status)
-            .increment(1);
-    }
+    let status = response.status().as_u16().to_string();
+    metrics::histogram!("pathology_request_seconds", "route" => route.clone())
+        .record(started.elapsed().as_secs_f64());
+    metrics::counter!("pathology_requests_total", "route" => route, "status" => status)
+        .increment(1);
     response
 }
 
@@ -264,7 +274,6 @@ pub fn router(state: Arc<AppState>, auth: Arc<Auth>, cors_origins: &[String]) ->
         .merge(protected)
         .route("/health", get(health))
         .route("/ready", get(ready))
-        .route("/metrics", get(render_metrics))
         // A 2048x2048 PNG tile base64-encoded is at most ~16 MB; anything larger is refused before parsing.
         .layer(DefaultBodyLimit::max(16 * 1024 * 1024))
         .layer(middleware::from_fn(track))

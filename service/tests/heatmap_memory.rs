@@ -77,7 +77,6 @@ fn app() -> axum::Router {
         max_windows: 4096,
         max_tile_side: 2048,
         min_stride: 32,
-        prometheus: None,
     });
     let auth = Arc::new(Auth::new(vec![("viewer".into(), KEY.into())], 1_000_000));
     router(state, auth, &[])

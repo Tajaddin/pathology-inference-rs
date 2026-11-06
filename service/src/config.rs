@@ -8,6 +8,8 @@ use anyhow::{Context, Result, bail};
 #[derive(Debug, Clone)]
 pub struct Config {
     pub port: u16,
+    /// Serves `/metrics`; keep it off the public network (Cloud Run routes only `port`).
+    pub metrics_port: u16,
     pub model_path: PathBuf,
     pub meta_path: PathBuf,
     /// `client:key` pairs; keys at least 16 characters.
@@ -61,6 +63,7 @@ impl Config {
         let workers: usize = num("WORKERS", "2")?;
         Ok(Self {
             port: num("PORT", "8080")?,
+            metrics_port: num("METRICS_PORT", "9464")?,
             model_path: var("MODEL_PATH", "models/pcam/1/model.onnx").into(),
             meta_path: var("MODEL_META_PATH", "models/pcam/1/model.json").into(),
             api_keys: parse_keys(&var("API_KEYS", ""))?,

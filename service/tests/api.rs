@@ -53,7 +53,6 @@ fn app_with(batcher: Batcher, per_minute: u32) -> axum::Router {
         max_windows: 400,
         max_tile_side: 1024,
         min_stride: 32,
-        prometheus: None,
     });
     let auth = Arc::new(Auth::new(vec![("viewer".into(), KEY.into())], per_minute));
     router(state, auth, &["http://localhost:5173".into()])

@@ -21,7 +21,7 @@ flowchart LR
     UI["web/viewer<br/>tiles + heatmap"] --> J
     K["k6<br/>load tests"] --> S
     PY["training/baseline<br/>FastAPI + onnxruntime"] -. same contract, for comparison .- S
-    S --> M["/metrics → Prometheus → Grafana"]
+    S --> M[":9464/metrics (internal) → Prometheus → Grafana"]
 ```
 
 ## Request path
