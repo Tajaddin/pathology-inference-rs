@@ -35,7 +35,7 @@ fn app(per_minute: u32) -> axum::Router {
             max_batch: 8,
             max_wait: Duration::from_millis(1),
             workers: 2,
-            queue: 64,
+            max_inflight_patches: 64,
         },
         |_| Ok(Box::new(FakeClassifier) as Box<dyn Classifier>),
     )
@@ -45,6 +45,7 @@ fn app(per_minute: u32) -> axum::Router {
         meta: meta(),
         ready: AtomicBool::new(true),
         max_patches: 64,
+        max_windows: 400,
         max_tile_side: 1024,
         min_stride: 32,
         prometheus: None,
@@ -178,6 +179,46 @@ async fn invalid_inputs_are_422_and_never_echoed() {
     )
     .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn heatmap_limits_are_checked_from_the_header_before_decoding() {
+    // Only the header survives: the pixels of these tiles cannot be decoded.
+    let header_only = |img: &RgbImage| {
+        let bytes = STANDARD.decode(png(img)).unwrap();
+        STANDARD.encode(&bytes[..64])
+    };
+    let big = header_only(&flat(1024, 1));
+    let (status, value) = post(
+        app(6000),
+        "/v1/heatmap",
+        json!({"image_base64": big, "stride": 32}),
+        Some(KEY),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    let message = value["error"]["message"].as_str().unwrap();
+    assert!(message.contains("900 windows"), "{message}");
+
+    // Three windows per tile against a quota of three: the second tile is charged, and refused, before decoding.
+    let app = app(3);
+    let tile = RgbImage::from_pixel(192, 96, Rgb([9, 9, 9]));
+    let (status, _) = post(
+        app.clone(),
+        "/v1/heatmap",
+        json!({"image_base64": png(&tile), "stride": 48}),
+        Some(KEY),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = post(
+        app,
+        "/v1/heatmap",
+        json!({"image_base64": header_only(&tile), "stride": 48}),
+        Some(KEY),
+    )
+    .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
 }
 
 #[tokio::test]

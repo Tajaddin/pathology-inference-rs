@@ -41,7 +41,7 @@ async fn main() -> Result<()> {
             max_batch: config.max_batch,
             max_wait: config.max_wait,
             workers: config.workers,
-            queue: 1024,
+            max_inflight_patches: config.max_inflight_patches,
         },
         move |_| {
             Ok(Box::new(OnnxClassifier::load(
@@ -58,6 +58,7 @@ async fn main() -> Result<()> {
         meta,
         ready: AtomicBool::new(false),
         max_patches: config.max_patches_per_request,
+        max_windows: config.max_windows_per_request,
         max_tile_side: config.max_tile_side,
         min_stride: config.min_stride,
         prometheus: Some(prometheus),

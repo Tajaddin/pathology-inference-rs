@@ -17,7 +17,10 @@ pub struct Config {
     pub max_wait: Duration,
     pub workers: usize,
     pub intra_threads: usize,
+    /// Patches whose model inputs may be queued or running at once (about 108 KiB each).
+    pub max_inflight_patches: usize,
     pub max_patches_per_request: usize,
+    pub max_windows_per_request: usize,
     pub max_tile_side: u32,
     pub min_stride: u32,
     pub cors_origins: Vec<String>,
@@ -64,7 +67,10 @@ impl Config {
             max_wait: Duration::from_micros(num("MAX_WAIT_US", "2000")?),
             workers,
             intra_threads: num("INTRA_THREADS", &(cpus / workers.max(1)).max(1).to_string())?,
+            max_inflight_patches: num("MAX_INFLIGHT_PATCHES", "512")?,
             max_patches_per_request: num("MAX_PATCHES_PER_REQUEST", "64")?,
+            // 2048 px at the minimum stride of 32 is 62 x 62 = 3,844 windows.
+            max_windows_per_request: num("MAX_WINDOWS_PER_REQUEST", "4096")?,
             max_tile_side: num("MAX_TILE_SIDE", "2048")?,
             min_stride: num("MIN_STRIDE", "32")?,
             cors_origins: var(

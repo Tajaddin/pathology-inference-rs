@@ -5,6 +5,7 @@
 //! GET  /v1/model      model version, threshold, temperature
 //! GET  /health        liveness;  GET /ready  model loaded and warmed up;  GET /metrics  Prometheus
 
+use std::ops::Range;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -21,7 +22,9 @@ use tower_http::trace::TraceLayer;
 use crate::auth::{Auth, Client, require_key};
 use crate::batcher::Batcher;
 use crate::error::ApiError;
-use crate::imaging::{PATCH, PATCH_LEN, decode_base64_rgb, grid, push_patch, windows};
+use crate::imaging::{
+    PATCH, PATCH_LEN, decode_base64, decode_patch, grid, push_patch, read_header, windows,
+};
 use crate::model::ModelMeta;
 
 const REPLY_TIMEOUT: Duration = Duration::from_secs(20);
@@ -31,6 +34,7 @@ pub struct AppState {
     pub meta: ModelMeta,
     pub ready: AtomicBool,
     pub max_patches: usize,
+    pub max_windows: usize,
     pub max_tile_side: u32,
     pub min_stride: u32,
     pub prometheus: Option<PrometheusHandle>,
@@ -84,11 +88,15 @@ pub struct HeatmapResponse {
     pub windows_above_threshold: usize,
 }
 
-async fn score(state: &AppState, inputs: Vec<f32>, n: usize) -> Result<Vec<f32>, ApiError> {
+/// Score `n` patches whose inputs `build` lays out one batch at a time.
+async fn score<F>(state: &AppState, n: usize, build: F) -> Result<Vec<f32>, ApiError>
+where
+    F: FnMut(Range<usize>) -> Vec<f32>,
+{
     if !state.ready.load(Ordering::Acquire) {
         return Err(ApiError::Unavailable("model is still loading".into()));
     }
-    match tokio::time::timeout(REPLY_TIMEOUT, state.batcher.predict_many(inputs, n)).await {
+    match tokio::time::timeout(REPLY_TIMEOUT, state.batcher.predict_chunked(n, build)).await {
         Ok(Ok(p)) => Ok(p),
         Ok(Err(e)) => Err(ApiError::Unavailable(e.to_string())),
         Err(_) => Err(ApiError::Unavailable("inference timed out".into())),
@@ -110,16 +118,22 @@ async fn classify(
     }
     auth.check_rate(&client, n as u32)?;
     let started = Instant::now();
-    let mut inputs = Vec::with_capacity(n * PATCH_LEN);
+    let mut images = Vec::with_capacity(n);
     let mut ids = Vec::with_capacity(n);
-    for (i, p) in req.patches.iter().enumerate() {
-        let img = decode_base64_rgb(&p.image_base64, PATCH)?;
-        push_patch(&img, &mut inputs)?;
-        ids.push(p.id.clone().unwrap_or_else(|| i.to_string()));
+    for (i, p) in req.patches.into_iter().enumerate() {
+        images.push(decode_patch(&p.image_base64)?);
+        ids.push(p.id.unwrap_or_else(|| i.to_string()));
     }
     metrics::histogram!("pathology_decode_seconds", "route" => "classify")
         .record(started.elapsed().as_secs_f64());
-    let probs = score(&state, inputs, n).await?;
+    let probs = score(&state, n, |range| {
+        let mut inputs = Vec::with_capacity(range.len() * PATCH_LEN);
+        for img in &images[range] {
+            push_patch(img, &mut inputs);
+        }
+        inputs
+    })
+    .await?;
     let t = state.meta.threshold;
     metrics::counter!("pathology_patches_total", "route" => "classify").increment(n as u64);
     let results = ids
@@ -152,14 +166,24 @@ async fn heatmap(
         )));
     }
     let started = Instant::now();
-    let tile = decode_base64_rgb(&req.image_base64, state.max_tile_side)?;
-    let g = grid(tile.width(), tile.height(), stride)?;
-    let n = (g.rows * g.cols) as usize;
-    auth.check_rate(&client, n as u32)?;
-    let inputs = windows(&tile, g);
+    let bytes = decode_base64(&req.image_base64)?;
+    drop(req);
+    // The grid comes from the header, so an over-limit request is refused or charged before any pixel is decoded.
+    let header = read_header(&bytes, state.max_tile_side)?;
+    let g = grid(header.width, header.height, stride)?;
+    let n = g.cells();
+    if n > state.max_windows {
+        return Err(ApiError::BadRequest(format!(
+            "the tile has {n} windows at stride {stride}; the limit is {}",
+            state.max_windows
+        )));
+    }
+    auth.check_rate(&client, u32::try_from(n).unwrap_or(u32::MAX))?;
+    let tile = header.decode(&bytes)?;
+    drop(bytes);
     metrics::histogram!("pathology_decode_seconds", "route" => "heatmap")
         .record(started.elapsed().as_secs_f64());
-    let probs = score(&state, inputs, n).await?;
+    let probs = score(&state, n, |range| windows(&tile, g, range)).await?;
     metrics::counter!("pathology_patches_total", "route" => "heatmap").increment(n as u64);
     let t = state.meta.threshold;
     Ok(Json(HeatmapResponse {

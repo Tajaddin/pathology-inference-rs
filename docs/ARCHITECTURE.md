@@ -28,11 +28,16 @@ flowchart LR
 
 1. `POST /v1/classify` (1-64 base64 PNG/JPEG patches of 96x96) or `POST /v1/heatmap` (one tile up to 2048 px,
    sliding windows at a stride of at least 32 px).
-2. The API checks the key (constant-time comparison over every key), charges the client's rate limit per
-   patch, decodes and validates the images, and lays out pixels as NHWC float32 (0-255; normalisation is inside
-   the model).
-3. Jobs go into a bounded queue. The collector forms a batch of up to `MAX_BATCH` patches or waits at most
-   `MAX_WAIT_US` after the first job; a tile larger than one batch is split across several.
+2. The API checks the key (constant-time comparison over every key) and reads each image header. A heatmap's
+   window count comes from the header, so a tile over `MAX_WINDOWS_PER_REQUEST` is refused, and the client's
+   rate limit charged per patch, before any pixel is decoded. Then it decodes and validates the images.
+3. The request is split into jobs of up to `MAX_BATCH` patches. Each job takes that many permits from an
+   in-flight budget (`MAX_INFLIGHT_PATCHES`) before its pixels are laid out as NHWC float32 (0-255;
+   normalisation is inside the model), and gives them back when it is done, so model inputs never take more than
+   the budget (512 patches, 54 MiB) however many requests arrive. With a counting allocator and the fake model,
+   one 2048 px tile at stride 32 (3,844 windows) peaked at 72.6 MiB of heap, against 829.6 MiB when every window
+   was laid out at once. The collector forms a batch of up to `MAX_BATCH` patches or waits at most `MAX_WAIT_US`
+   after the first job.
 4. Each worker thread owns an ONNX Runtime session (`Session::run` needs exclusive access), so inference never
    waits on a lock. Probabilities are `sigmoid(logit / temperature)` with the temperature fitted on validation.
 5. A full queue pushes back on the request; a failed batch fails every request in it with 503.

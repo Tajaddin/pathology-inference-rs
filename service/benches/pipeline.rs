@@ -32,14 +32,14 @@ fn bench(c: &mut Criterion) {
         b.iter(|| {
             let img = decode_base64_rgb(black_box(&patch), 96).unwrap();
             let mut out = Vec::with_capacity(96 * 96 * 3);
-            push_patch(&img, &mut out).unwrap();
+            push_patch(&img, &mut out);
             black_box(out)
         });
     });
     let tile = textured(1536);
     let g = grid(1536, 1536, 48).unwrap();
     c.bench_function("windows_1536px_tile_stride_48", |b| {
-        b.iter(|| black_box(windows(black_box(&tile), g)));
+        b.iter(|| black_box(windows(black_box(&tile), g, 0..g.cells())));
     });
 }
 
