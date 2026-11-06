@@ -34,5 +34,13 @@ one or a few patches per request. ONNX Runtime sessions in ort 2.0 need exclusiv
   8-12 ms up to 400 requests/s, and at 800 requests/s the service keeps up (p99 154 ms, nothing dropped) where the
   Python baseline saturates at 486 requests/s with a p99 of 9.2 s. One intra-op thread per worker beats two:
   ONNX Runtime's intra-op parallelism gains little on batches this small.
-- Tests check batching actually happens under concurrency, that each caller gets its own results, and that model
-  errors reach every waiting caller.
+- Admission is first come, first served: tokio's semaphore queues waiters in order, and the one at the head
+  takes whatever room is free while it waits for the rest. A large request that does not fit therefore holds
+  back every request behind it, even ones that would fit, until it is admitted or refused at
+  `ADMIT_TIMEOUT_MS`. At the default 4,096 pending patches, a 3,844-window tile does this whenever more than 252
+  are pending when it arrives. Letting small requests pass instead would starve large tiles under steady traffic.
+  Only trusted keys can send tiles that large (the viewer's is capped at 256 windows), and a
+  `MAX_PENDING_PATCHES` well above `MAX_WINDOWS_PER_REQUEST` makes it rarer, at the cost of a longer wait for
+  admitted work under overload.
+- Tests check batching actually happens under concurrency, that each caller gets its own results, that model
+  errors reach every waiting caller, and that admission keeps arrival order.

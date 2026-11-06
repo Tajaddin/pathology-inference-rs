@@ -12,8 +12,9 @@
 //! Overload is refused rather than queued. A request first reserves all of its patches among
 //! `max_pending_patches`, the work admitted but not yet answered, and fails with [`Overloaded`] if there is no room
 //! within `admit_timeout`. An admitted request therefore waits behind at most that much work, whatever its size,
-//! and is never cut off halfway. Jobs whose caller has gone (a timeout or a closed connection) are dropped
-//! unscored.
+//! and is never cut off halfway. Admission is first come, first served: a request that does not fit yet takes the
+//! free room while it waits, so the ones behind it wait too, even those that would fit, and large tiles are never
+//! starved by small requests. Jobs whose caller has gone (a timeout or a closed connection) are dropped unscored.
 
 use std::ops::Range;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -653,6 +654,32 @@ mod tests {
             "{text}"
         );
         assert!(!text.contains("pathology_queue_capacity"), "{text}");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_waiting_request_is_not_overtaken_by_smaller_ones() {
+        let batcher = Batcher::spawn(
+            BatchConfig {
+                max_pending_patches: 8,
+                ..config(8, 1, 8)
+            },
+            |_| Ok(Box::new(FakeClassifier) as Box<dyn Classifier>),
+        )
+        .unwrap();
+        let held = batcher.admit(4).await.unwrap();
+        let b = batcher.clone();
+        let large = tokio::spawn(async move { b.admit(8).await });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert_eq!(batcher.pending.available_permits(), 0, "the free room");
+        let b = batcher.clone();
+        let small = tokio::spawn(async move { b.admit(1).await });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert!(!small.is_finished(), "a later request went first");
+        drop(held);
+        let large = large.await.unwrap().unwrap();
+        assert!(!small.is_finished());
+        drop(large);
+        assert!(small.await.unwrap().is_ok());
     }
 
     #[test]

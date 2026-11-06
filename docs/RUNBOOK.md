@@ -43,10 +43,15 @@ wait as spare capacity.
 `503` with code `overloaded` and `Retry-After: 1`: the admitted work (`MAX_PENDING_PATCHES`) stayed full for
 `ADMIT_TIMEOUT_MS`, so the request was refused before any work was done. It shows in `pathology_errors_total`
 with `code="overloaded"`, in the 5xx rate, and as `pathology_admission_wait_seconds` near `ADMIT_TIMEOUT_MS`.
-Add replicas or workers as for Queueing. Under overload an admitted
-request waits about `MAX_PENDING_PATCHES` divided by the patches scored per second; lower it (with
-`MAX_WINDOWS_PER_REQUEST`, which it must not be below) to answer sooner. `MAX_INFLIGHT_PATCHES` bounds memory
-instead: each patch is 108 KiB of model inputs.
+Add replicas or workers as for Queueing. Under overload an admitted request waits about `MAX_PENDING_PATCHES`
+divided by the patches scored per second; lower it (with `MAX_WINDOWS_PER_REQUEST`, which it must not be below)
+to answer sooner. `MAX_INFLIGHT_PATCHES` bounds memory instead: each patch is 108 KiB of model inputs.
+
+Admission is first come, first served ([ADR 0003](adr/0003-dynamic-batching-with-worker-owned-sessions.md)), so
+a large heatmap that does not fit yet holds back every request behind it, single patches included, for up to
+`ADMIT_TIMEOUT_MS`. A `/v1/classify` latency spike with admission waits near that timeout while large tiles
+arrive is this. A `MAX_PENDING_PATCHES` well above `MAX_WINDOWS_PER_REQUEST`, or a lower
+`MAX_WINDOWS_PER_REQUEST`, makes it rarer.
 
 ## Rate limiting
 

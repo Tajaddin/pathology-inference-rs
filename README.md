@@ -65,7 +65,7 @@ Reproduce the comparison: `make compare bench`.
 
 ## Testing and CI
 
-- **Rust:** 20 unit tests, 11 API tests on a fake model, a heap test that holds the largest heatmaps to the
+- **Rust:** 21 unit tests, 11 API tests on a fake model, a heap test that holds the largest heatmaps to the
   in-flight budget, a test that arbitrary URLs add no metric series, and the parity test against the real model;
   rustfmt, clippy (pedantic, warnings as errors), `cargo audit`.
 - **Python:** 27 tests (metrics against scikit-learn, data preparation and checksums, augmentation, ONNX export
