@@ -10,7 +10,8 @@ which is not published: Cloud Run routes only port 8080, and compose leaves it o
 (requests get 503 `unavailable`).
 
 1. `GET /ready`: false means the model did not load or the warm-up batch failed. The service log says which file
-   (`MODEL_PATH`, `MODEL_META_PATH`) and why.
+   (`MODEL_PATH`, `MODEL_META_PATH`) and why. `/health` and `/ready` both answer 503 `inference worker stopped`
+   once a worker thread has died (a bug: the log has the panic), so the liveness probe restarts the instance.
 2. `pathology_errors_total` by `code`: `unavailable` is inference (ONNX Runtime returned an error or a worker
    stopped), `internal` is a bug; neither should happen in normal operation.
 3. A new model version: check `models/pcam/<version>/model.json` names the ONNX graph's input and output

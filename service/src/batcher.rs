@@ -13,6 +13,7 @@
 //! with [`Overloaded`]. Jobs whose caller has gone (a timeout or a closed connection) are dropped unscored.
 
 use std::ops::Range;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc as std_mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -72,6 +73,17 @@ pub struct Batcher {
     budget: Arc<Semaphore>,
     max_batch: usize,
     admit_timeout: Duration,
+    workers: usize,
+    running: Arc<AtomicUsize>,
+}
+
+/// Counts a worker thread as running until it exits, including by a panic.
+struct Running(Arc<AtomicUsize>);
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
 }
 
 impl Batcher {
@@ -90,12 +102,18 @@ impl Batcher {
         let (tx, rx) = mpsc::channel::<Job>(config.max_inflight_patches);
         let (batch_tx, batch_rx) = std_mpsc::sync_channel::<Batch>(config.workers * 2);
         let batch_rx = Arc::new(Mutex::new(batch_rx));
+        let running = Arc::new(AtomicUsize::new(0));
         for worker in 0..config.workers {
             let mut model = make(worker)?;
             let rx = Arc::clone(&batch_rx);
+            running.fetch_add(1, Ordering::AcqRel);
+            let guard = Running(Arc::clone(&running));
             std::thread::Builder::new()
                 .name(format!("inference-{worker}"))
-                .spawn(move || run_worker(model.as_mut(), &rx))?;
+                .spawn(move || {
+                    let _guard = guard;
+                    run_worker(model.as_mut(), &rx);
+                })?;
         }
         tokio::spawn(collect(rx, batch_tx, config));
         Ok(Self {
@@ -103,7 +121,15 @@ impl Batcher {
             budget: Arc::new(Semaphore::new(config.max_inflight_patches)),
             max_batch: config.max_batch,
             admit_timeout: config.admit_timeout,
+            workers: config.workers,
+            running,
         })
+    }
+
+    /// Every worker thread is still running.
+    #[must_use]
+    pub fn healthy(&self) -> bool {
+        self.running.load(Ordering::Acquire) == self.workers
     }
 
     #[must_use]
@@ -277,6 +303,16 @@ fn run_worker(model: &mut dyn Classifier, rx: &Mutex<std_mpsc::Receiver<Batch>>)
         metrics::histogram!("pathology_inference_seconds").record(started.elapsed().as_secs_f64());
         metrics::histogram!("pathology_batch_size").record(batch.patches as f64);
         match result {
+            Ok(probs) if probs.len() != batch.patches => {
+                let msg = format!(
+                    "model returned {} outputs for {}",
+                    probs.len(),
+                    batch.patches
+                );
+                for job in batch.jobs {
+                    job.answer(Err(anyhow!("inference failed: {msg}")));
+                }
+            }
             Ok(probs) => {
                 let mut offset = 0;
                 for job in batch.jobs {
@@ -299,7 +335,6 @@ fn run_worker(model: &mut dyn Classifier, rx: &Mutex<std_mpsc::Receiver<Batch>>)
 mod tests {
     use super::*;
     use crate::model::FakeClassifier;
-    use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// Records the size of every batch it sees.
     struct Counting(Arc<Mutex<Vec<usize>>>);
@@ -461,6 +496,48 @@ mod tests {
         assert!(err.is::<Overloaded>(), "{err}");
         drop(held);
         assert_eq!(batcher.predict(patch(1.0), 1).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_short_model_output_fails_the_batch_not_the_worker() {
+        struct Short;
+        impl Classifier for Short {
+            fn predict(&mut self, batch: &[f32], n: usize) -> Result<Vec<f32>> {
+                let mut probs = FakeClassifier.predict(batch, n)?;
+                probs.pop();
+                Ok(probs)
+            }
+        }
+        let batcher = Batcher::spawn(config(4, 1, 8), |_| {
+            Ok(Box::new(Short) as Box<dyn Classifier>)
+        })
+        .unwrap();
+        for _ in 0..2 {
+            let err = batcher.predict(patch(1.0), 1).await.unwrap_err();
+            assert!(
+                err.to_string().contains("returned 0 outputs for 1"),
+                "{err}"
+            );
+        }
+        assert!(batcher.healthy());
+    }
+
+    #[tokio::test]
+    async fn a_worker_that_dies_makes_the_batcher_unhealthy() {
+        struct Panicking;
+        impl Classifier for Panicking {
+            fn predict(&mut self, _: &[f32], _: usize) -> Result<Vec<f32>> {
+                panic!("bug in the model wrapper")
+            }
+        }
+        let batcher = Batcher::spawn(config(4, 2, 8), |_| {
+            Ok(Box::new(Panicking) as Box<dyn Classifier>)
+        })
+        .unwrap();
+        assert!(batcher.healthy());
+        assert!(batcher.predict(patch(1.0), 1).await.is_err());
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!batcher.healthy());
     }
 
     #[test]

@@ -3,7 +3,7 @@
 //! POST /v1/classify   1-64 base64 PNG/JPEG patches (96x96)  -> calibrated probability per patch
 //! POST /v1/heatmap    one tile up to `MAX_TILE_SIDE` pixels    -> sliding-window probabilities (row-major)
 //! GET  /v1/model      model version, threshold, temperature
-//! GET  /health        liveness;  GET /ready  model loaded and warmed up
+//! GET  /health        liveness (every inference worker running);  GET /ready  model loaded and warmed up
 //!
 //! Prometheus metrics are served by [`metrics_router`] on a separate, internal port.
 
@@ -207,12 +207,19 @@ async fn model_info(State(state): State<Arc<AppState>>) -> Json<ModelMeta> {
     Json(state.meta.clone())
 }
 
-async fn health() -> &'static str {
-    "ok"
+/// Fails once an inference worker has died, so the platform restarts the instance.
+async fn health(State(state): State<Arc<AppState>>) -> (StatusCode, &'static str) {
+    if state.batcher.healthy() {
+        (StatusCode::OK, "ok")
+    } else {
+        (StatusCode::SERVICE_UNAVAILABLE, "inference worker stopped")
+    }
 }
 
 async fn ready(State(state): State<Arc<AppState>>) -> (StatusCode, &'static str) {
-    if state.ready.load(Ordering::Acquire) {
+    if !state.batcher.healthy() {
+        (StatusCode::SERVICE_UNAVAILABLE, "inference worker stopped")
+    } else if state.ready.load(Ordering::Acquire) {
         (StatusCode::OK, "ready")
     } else {
         (StatusCode::SERVICE_UNAVAILABLE, "loading")

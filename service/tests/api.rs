@@ -332,6 +332,40 @@ async fn overload_is_refused_with_503_and_retry_after() {
 }
 
 #[tokio::test]
+async fn health_and_ready_fail_once_a_worker_dies() {
+    struct Panicking;
+    impl Classifier for Panicking {
+        fn predict(&mut self, _: &[f32], _: usize) -> anyhow::Result<Vec<f32>> {
+            panic!("bug in the model wrapper")
+        }
+    }
+    let batcher = Batcher::spawn(
+        BatchConfig {
+            max_batch: 8,
+            max_wait: Duration::from_millis(1),
+            workers: 1,
+            max_inflight_patches: 8,
+            admit_timeout: Duration::from_secs(1),
+        },
+        |_| Ok(Box::new(Panicking) as Box<dyn Classifier>),
+    )
+    .unwrap();
+    let app = app_with(batcher, 6000);
+    let body = json!({"patches": [{"image_base64": png(&flat(96, 1))}]});
+    let (status, _) = post(app.clone(), "/v1/classify", body, Some(KEY)).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    for path in ["/health", "/ready"] {
+        let res = app
+            .clone()
+            .oneshot(Request::get(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE, "{path}");
+    }
+}
+
+#[tokio::test]
 async fn health_ready_and_cors() {
     let app = app(6000);
     let res = app
