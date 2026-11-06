@@ -11,7 +11,7 @@ use base64::engine::general_purpose::STANDARD;
 use http_body_util::BodyExt;
 use image::{Rgb, RgbImage};
 use pathology_service::api::{AppState, ClassifyResponse, HeatmapResponse, router};
-use pathology_service::auth::Auth;
+use pathology_service::auth::{Auth, ClientLimit};
 use pathology_service::batcher::{BatchConfig, Batcher};
 use pathology_service::model::{Classifier, FakeClassifier, ModelMeta};
 use serde_json::{Value, json};
@@ -45,6 +45,13 @@ fn app(per_minute: u32) -> axum::Router {
 }
 
 fn app_with(batcher: Batcher, per_minute: u32) -> axum::Router {
+    app_with_auth(
+        batcher,
+        Auth::new(vec![("viewer".into(), KEY.into())], per_minute),
+    )
+}
+
+fn app_with_auth(batcher: Batcher, auth: Auth) -> axum::Router {
     let state = Arc::new(AppState {
         batcher,
         meta: meta(),
@@ -54,8 +61,7 @@ fn app_with(batcher: Batcher, per_minute: u32) -> axum::Router {
         max_tile_side: 1024,
         min_stride: 32,
     });
-    let auth = Arc::new(Auth::new(vec![("viewer".into(), KEY.into())], per_minute));
-    router(state, auth, &["http://localhost:5173".into()])
+    router(state, Arc::new(auth), &["http://localhost:5173".into()])
 }
 
 fn png(img: &RgbImage) -> String {
@@ -223,6 +229,44 @@ async fn heatmap_limits_are_checked_from_the_header_before_decoding() {
     )
     .await;
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
+async fn a_client_with_its_own_limits_gets_a_lower_tile_cap() {
+    let batcher = Batcher::spawn(
+        BatchConfig {
+            max_batch: 8,
+            max_wait: Duration::from_millis(1),
+            workers: 1,
+            max_inflight_patches: 64,
+            admit_timeout: Duration::from_secs(1),
+        },
+        |_| Ok(Box::new(FakeClassifier) as Box<dyn Classifier>),
+    )
+    .unwrap();
+    let lab = "test-key-lab-00000000001";
+    let auth = Auth::new(
+        vec![("viewer".into(), KEY.into()), ("lab".into(), lab.into())],
+        6000,
+    )
+    .with_client_limits(&[ClientLimit {
+        client: "viewer".into(),
+        per_minute: 1200,
+        max_windows: 16,
+    }]);
+    let app = app_with_auth(batcher, auth);
+    // 288 px at stride 48: 5 x 5 = 25 windows.
+    let body = json!({"image_base64": png(&flat(288, 9)), "stride": 48});
+    let (status, value) = post(app.clone(), "/v1/heatmap", body.clone(), Some(KEY)).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(
+        value["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("the limit is 16")
+    );
+    let (status, _) = post(app, "/v1/heatmap", body, Some(lab)).await;
+    assert_eq!(status, StatusCode::OK);
 }
 
 #[tokio::test]

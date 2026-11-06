@@ -4,7 +4,8 @@ import { PathologyApiError, PathologyClient, heatColor } from "@pathology/client
 /** @typedef {{ name: string, file: string, grid: number, labels: number[] }} DemoTile */
 
 const serviceUrl = import.meta.env.VITE_SERVICE_URL ?? "http://localhost:8080";
-// Local demo key only; a deployed viewer gets its key from the hosting environment, never from the repo.
+// Built into the bundle, so public once hosted: the service gives this key its own low quota and tile cap
+// (CLIENT_LIMITS). The default is the local demo key; a deployed build passes its own, never one from the repo.
 const apiKey = import.meta.env.VITE_API_KEY ?? "local-dev-key-viewer-000001";
 const client = new PathologyClient({ baseUrl: serviceUrl, apiKey, timeoutMs: 30_000 });
 

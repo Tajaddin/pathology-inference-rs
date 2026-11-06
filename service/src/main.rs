@@ -63,10 +63,10 @@ async fn main() -> Result<()> {
         max_tile_side: config.max_tile_side,
         min_stride: config.min_stride,
     });
-    let auth = Arc::new(Auth::new(
-        config.api_keys.clone(),
-        config.rate_limit_per_minute,
-    ));
+    let auth = Arc::new(
+        Auth::new(config.api_keys.clone(), config.rate_limit_per_minute)
+            .with_client_limits(&config.client_limits),
+    );
     if config.api_keys.is_empty() {
         tracing::warn!("API_KEYS is empty: every /v1 request will be refused");
     }

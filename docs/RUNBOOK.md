@@ -43,7 +43,7 @@ memory allows: each patch of budget is 108 KiB of model inputs.
 ## Rate limiting
 
 `429` with `Retry-After` is the per-client limit (`RATE_LIMIT_PER_MINUTE`, counted in patches, so a 64-patch
-request costs 64). `pathology_rate_limited_total` by client shows who hits it.
+request costs 64). Clients in `CLIENT_LIMITS` (the viewer) have their own quota and heatmap window cap instead. `pathology_rate_limited_total` by client shows who hits it.
 
 ## Rolling out a model
 

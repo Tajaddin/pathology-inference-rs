@@ -87,6 +87,8 @@ with user credentials, now set on that resource alone.
 - Not a medical device: PCam comes from one challenge (two Dutch centres); other scanners and stains will shift
   the inputs. The scores rank patches; they are not calibrated risks on the test split.
 - The tiles in the viewer are mosaics of real test patches, not contiguous slide regions.
+- The viewer's API key ships in its JavaScript, so it is public once the viewer is hosted; the service limits that
+  key to 1,200 patches a minute and 256 windows per tile. A backend that holds the key would close the gap.
 - Cloud Run latencies are measured from one home connection, so they are mostly network; the cloud load test
   stopped at 100 requests/s, so per-instance throughput on Cloud Run is not measured.
 

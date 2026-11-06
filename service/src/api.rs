@@ -174,10 +174,12 @@ async fn heatmap(
     let header = read_header(&bytes, state.max_tile_side)?;
     let g = grid(header.width, header.height, stride)?;
     let n = g.cells();
-    if n > state.max_windows {
+    let max_windows = auth
+        .max_windows(&client)
+        .map_or(state.max_windows, |own| own.min(state.max_windows));
+    if n > max_windows {
         return Err(ApiError::BadRequest(format!(
-            "the tile has {n} windows at stride {stride}; the limit is {}",
-            state.max_windows
+            "the tile has {n} windows at stride {stride}; the limit is {max_windows}"
         )));
     }
     auth.check_rate(&client, u32::try_from(n).unwrap_or(u32::MAX))?;

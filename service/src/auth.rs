@@ -1,5 +1,6 @@
 //! API keys (constant-time comparison) and a per-client rate limit.
 
+use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
@@ -8,7 +9,7 @@ use axum::http::HeaderMap;
 use axum::middleware::Next;
 use axum::response::Response;
 use governor::clock::{Clock, DefaultClock};
-use governor::{DefaultKeyedRateLimiter, Quota, RateLimiter};
+use governor::{DefaultDirectRateLimiter, DefaultKeyedRateLimiter, Quota, RateLimiter};
 use subtle::ConstantTimeEq;
 
 use crate::error::ApiError;
@@ -16,21 +17,54 @@ use crate::error::ApiError;
 #[derive(Clone, Debug)]
 pub struct Client(pub String);
 
+/// Limits for one client in place of the defaults: for a key that cannot be kept secret, such as the one built
+/// into the viewer's JavaScript.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClientLimit {
+    pub client: String,
+    /// Patches per minute.
+    pub per_minute: u32,
+    /// Heatmap windows per request.
+    pub max_windows: usize,
+}
+
 pub struct Auth {
     keys: Vec<(String, String)>,
     limiter: DefaultKeyedRateLimiter<String>,
+    own_limits: HashMap<String, (DefaultDirectRateLimiter, usize)>,
     clock: DefaultClock,
+}
+
+fn per_minute(n: u32) -> Quota {
+    Quota::per_minute(NonZeroU32::new(n.max(1)).expect("non-zero"))
 }
 
 impl Auth {
     #[must_use]
-    pub fn new(keys: Vec<(String, String)>, per_minute: u32) -> Self {
-        let quota = Quota::per_minute(NonZeroU32::new(per_minute.max(1)).expect("non-zero"));
+    pub fn new(keys: Vec<(String, String)>, per_minute_default: u32) -> Self {
         Self {
             keys,
-            limiter: RateLimiter::keyed(quota),
+            limiter: RateLimiter::keyed(per_minute(per_minute_default)),
+            own_limits: HashMap::new(),
             clock: DefaultClock::default(),
         }
+    }
+
+    #[must_use]
+    pub fn with_client_limits(mut self, limits: &[ClientLimit]) -> Self {
+        for l in limits {
+            self.own_limits.insert(
+                l.client.clone(),
+                (RateLimiter::direct(per_minute(l.per_minute)), l.max_windows),
+            );
+        }
+        self
+    }
+
+    /// The heatmap window cap of a client that has its own limits.
+    #[must_use]
+    pub fn max_windows(&self, client: &str) -> Option<usize> {
+        self.own_limits.get(client).map(|(_, windows)| *windows)
     }
 
     /// The client a presented key belongs to. Every key is compared, in constant time, so the response time
@@ -48,7 +82,11 @@ impl Auth {
 
     pub fn check_rate(&self, client: &str, cost: u32) -> Result<(), ApiError> {
         let cost = NonZeroU32::new(cost.max(1)).expect("non-zero");
-        match self.limiter.check_key_n(&client.to_string(), cost) {
+        let outcome = match self.own_limits.get(client) {
+            Some((limiter, _)) => limiter.check_n(cost),
+            None => self.limiter.check_key_n(&client.to_string(), cost),
+        };
+        match outcome {
             Ok(Ok(())) => Ok(()),
             Ok(Err(not_until)) => {
                 metrics::counter!("pathology_rate_limited_total", "client" => client.to_string())
@@ -119,5 +157,22 @@ mod tests {
             auth.check_rate("c", 11),
             Err(ApiError::BadRequest(_))
         ));
+    }
+
+    #[test]
+    fn a_client_with_its_own_limits_gets_its_own_quota() {
+        let auth = Auth::new(vec![], 100).with_client_limits(&[ClientLimit {
+            client: "viewer".into(),
+            per_minute: 5,
+            max_windows: 16,
+        }]);
+        assert!(auth.check_rate("viewer", 5).is_ok());
+        assert!(matches!(
+            auth.check_rate("viewer", 1),
+            Err(ApiError::RateLimited { .. })
+        ));
+        assert!(auth.check_rate("lab", 50).is_ok());
+        assert_eq!(auth.max_windows("viewer"), Some(16));
+        assert_eq!(auth.max_windows("lab"), None);
     }
 }
