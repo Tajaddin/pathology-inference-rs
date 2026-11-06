@@ -72,6 +72,12 @@ pub struct BatchConfig {
 #[error("the service is at capacity; retry shortly")]
 pub struct Overloaded;
 
+/// Room reserved for one request among the pending patches; dropping it gives the room back.
+pub struct Admission {
+    room: OwnedSemaphorePermit,
+    n: usize,
+}
+
 #[derive(Clone)]
 pub struct Batcher {
     tx: mpsc::Sender<Job>,
@@ -170,17 +176,16 @@ impl Batcher {
         reply.await.map_err(|_| anyhow!("worker dropped the job"))?
     }
 
-    /// Score any number of patches, in order, as jobs of up to `max_batch` that run in parallel.
+    /// Score the patches of an admitted request, in order, as jobs of up to `max_batch` that run in parallel.
     ///
     /// `build(range)` lays out the inputs of patches `range`; it is called only once that job holds its permits,
     /// so a request never holds more inputs than the budget allows. Dropping the returned future abandons the
-    /// jobs it has queued.
-    pub async fn predict_chunked<F>(&self, n: usize, mut build: F) -> Result<Vec<f32>>
+    /// jobs it has queued and gives the room back.
+    pub async fn predict_chunked<F>(&self, admission: Admission, mut build: F) -> Result<Vec<f32>>
     where
         F: FnMut(Range<usize>) -> Vec<f32>,
     {
-        anyhow::ensure!(n > 0, "nothing to score");
-        let _admitted = self.admit(n).await?;
+        let Admission { room: _room, n } = admission;
         let mut replies = Vec::with_capacity(n.div_ceil(self.max_batch));
         for start in (0..n).step_by(self.max_batch) {
             let range = start..n.min(start + self.max_batch);
@@ -205,18 +210,20 @@ impl Batcher {
         Ok(out)
     }
 
-    /// Reserve room for a whole request among the pending patches.
-    async fn admit(&self, n: usize) -> Result<OwnedSemaphorePermit> {
+    /// Reserve room for a request of `n` patches among the pending work, or fail with [`Overloaded`] after
+    /// `admit_timeout`. Callers admit a request before decoding it, so one that is refused costs nothing.
+    pub async fn admit(&self, n: usize) -> Result<Admission> {
         anyhow::ensure!(
-            n <= self.max_pending,
-            "{n} patches is more than the {} that may be pending",
+            n > 0 && n <= self.max_pending,
+            "a request holds 1..={} patches, got {n}",
             self.max_pending
         );
         let room = Arc::clone(&self.pending).acquire_many_owned(u32::try_from(n)?);
-        tokio::time::timeout(self.admit_timeout, room)
+        let room = tokio::time::timeout(self.admit_timeout, room)
             .await
             .map_err(|_| anyhow::Error::new(Overloaded))?
-            .map_err(|_| anyhow!("batcher stopped"))
+            .map_err(|_| anyhow!("batcher stopped"))?;
+        Ok(Admission { room, n })
     }
 
     async fn acquire(&self, n: usize) -> Result<OwnedSemaphorePermit> {
@@ -431,8 +438,9 @@ mod tests {
         })
         .unwrap();
         let mut built = Vec::new();
+        let admission = batcher.admit(21).await.unwrap();
         let out = batcher
-            .predict_chunked(21, |range| {
+            .predict_chunked(admission, |range| {
                 built.push(range.clone());
                 range.flat_map(|i| patch(i as f32 * 10.0)).collect()
             })
@@ -457,7 +465,8 @@ mod tests {
         let b = batcher.clone();
         let counter = Arc::clone(&built);
         let scoring = tokio::spawn(async move {
-            b.predict_chunked(4, |range| {
+            let admission = b.admit(4).await?;
+            b.predict_chunked(admission, |range| {
                 counter.fetch_add(1, Ordering::SeqCst);
                 vec![0.0; range.len() * PATCH_LEN]
             })
@@ -479,7 +488,12 @@ mod tests {
         })
         .unwrap();
         // 20 jobs of 8 patches at 10 ms each; the caller gives up after 25 ms.
-        let scoring = batcher.predict_chunked(160, |range| vec![1.0; range.len() * PATCH_LEN]);
+        let scoring = async {
+            let admission = batcher.admit(160).await?;
+            batcher
+                .predict_chunked(admission, |range| vec![1.0; range.len() * PATCH_LEN])
+                .await
+        };
         assert!(
             tokio::time::timeout(Duration::from_millis(25), scoring)
                 .await
@@ -512,10 +526,7 @@ mod tests {
         let err = batcher.predict(patch(1.0), 1).await.unwrap_err();
         assert!(err.is::<Overloaded>(), "{err}");
         assert!(started.elapsed() < Duration::from_millis(500));
-        let err = batcher
-            .predict_chunked(1, |range| vec![1.0; range.len() * PATCH_LEN])
-            .await
-            .unwrap_err();
+        let err = batcher.admit(1).await.err().unwrap();
         assert!(err.is::<Overloaded>(), "{err}");
         drop(held);
         assert_eq!(batcher.predict(patch(1.0), 1).await.unwrap().len(), 1);
@@ -579,7 +590,8 @@ mod tests {
         let b = batcher.clone();
         // Eight jobs at 10 ms each, through a budget that holds only one of them at a time.
         let large = tokio::spawn(async move {
-            b.predict_chunked(64, |range| vec![1.0; range.len() * PATCH_LEN])
+            let admission = b.admit(64).await?;
+            b.predict_chunked(admission, |range| vec![1.0; range.len() * PATCH_LEN])
                 .await
         });
         tokio::time::sleep(Duration::from_millis(5)).await;
@@ -588,10 +600,7 @@ mod tests {
         assert_eq!(large.await.unwrap().unwrap().len(), 64);
         assert_eq!(calls.load(Ordering::SeqCst), 8);
         assert!(
-            batcher
-                .predict_chunked(65, |range| vec![1.0; range.len() * PATCH_LEN])
-                .await
-                .is_err(),
+            batcher.admit(65).await.is_err(),
             "larger than the pending limit"
         );
     }

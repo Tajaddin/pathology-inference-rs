@@ -22,7 +22,7 @@ use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
 use crate::auth::{Auth, Client, require_key};
-use crate::batcher::{Batcher, Overloaded};
+use crate::batcher::{Admission, Batcher, Overloaded};
 use crate::error::ApiError;
 use crate::imaging::{
     PATCH, PATCH_LEN, decode_base64, decode_patch, grid, push_patch, read_header, windows,
@@ -89,17 +89,32 @@ pub struct HeatmapResponse {
     pub windows_above_threshold: usize,
 }
 
-/// Score `n` patches whose inputs `build` lays out one batch at a time.
-async fn score<F>(state: &AppState, n: usize, build: F) -> Result<Vec<f32>, ApiError>
-where
-    F: FnMut(Range<usize>) -> Vec<f32>,
-{
+/// Reserve room for `n` patches among the pending work, before anything is decoded.
+async fn admit(state: &AppState, n: usize) -> Result<Admission, ApiError> {
     if !state.ready.load(Ordering::Acquire) {
         return Err(ApiError::Unavailable("model is still loading".into()));
     }
-    match tokio::time::timeout(REPLY_TIMEOUT, state.batcher.predict_chunked(n, build)).await {
+    state.batcher.admit(n).await.map_err(|e| {
+        if e.is::<Overloaded>() {
+            ApiError::Overloaded
+        } else {
+            ApiError::Unavailable(e.to_string())
+        }
+    })
+}
+
+/// Score an admitted request whose inputs `build` lays out one batch at a time.
+async fn score<F>(state: &AppState, admission: Admission, build: F) -> Result<Vec<f32>, ApiError>
+where
+    F: FnMut(Range<usize>) -> Vec<f32>,
+{
+    match tokio::time::timeout(
+        REPLY_TIMEOUT,
+        state.batcher.predict_chunked(admission, build),
+    )
+    .await
+    {
         Ok(Ok(p)) => Ok(p),
-        Ok(Err(e)) if e.is::<Overloaded>() => Err(ApiError::Overloaded),
         Ok(Err(e)) => Err(ApiError::Unavailable(e.to_string())),
         Err(_) => Err(ApiError::Unavailable("inference timed out".into())),
     }
@@ -119,6 +134,7 @@ async fn classify(
         )));
     }
     auth.check_rate(&client, n as u32)?;
+    let admission = admit(&state, n).await?;
     let started = Instant::now();
     let mut images = Vec::with_capacity(n);
     let mut ids = Vec::with_capacity(n);
@@ -128,7 +144,7 @@ async fn classify(
     }
     metrics::histogram!("pathology_decode_seconds", "route" => "classify")
         .record(started.elapsed().as_secs_f64());
-    let probs = score(&state, n, |range| {
+    let probs = score(&state, admission, |range| {
         let mut inputs = Vec::with_capacity(range.len() * PATCH_LEN);
         for img in &images[range] {
             push_patch(img, &mut inputs);
@@ -183,11 +199,15 @@ async fn heatmap(
         )));
     }
     auth.check_rate(&client, u32::try_from(n).unwrap_or(u32::MAX))?;
+    let mut decoding = started.elapsed();
+    let admission = admit(&state, n).await?;
+    let started = Instant::now();
     let tile = header.decode(&bytes)?;
     drop(bytes);
+    decoding += started.elapsed();
     metrics::histogram!("pathology_decode_seconds", "route" => "heatmap")
-        .record(started.elapsed().as_secs_f64());
-    let probs = score(&state, n, |range| windows(&tile, g, range)).await?;
+        .record(decoding.as_secs_f64());
+    let probs = score(&state, admission, |range| windows(&tile, g, range)).await?;
     metrics::counter!("pathology_patches_total", "route" => "heatmap").increment(n as u64);
     let t = state.meta.threshold;
     Ok(Json(HeatmapResponse {

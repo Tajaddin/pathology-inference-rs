@@ -63,8 +63,9 @@ async fn rust_service_matches_python_onnxruntime() {
         .iter()
         .map(|f| decode_rgb(&std::fs::read(fixtures_dir.join(&f.file)).unwrap(), 96).unwrap())
         .collect();
+    let admission = batcher.admit(patches.len()).await.unwrap();
     let got = batcher
-        .predict_chunked(patches.len(), |range| {
+        .predict_chunked(admission, |range| {
             let mut inputs = Vec::with_capacity(range.len() * PATCH_LEN);
             for p in &patches[range] {
                 push_patch(p, &mut inputs);

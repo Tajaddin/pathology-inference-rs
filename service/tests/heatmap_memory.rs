@@ -2,7 +2,8 @@
 //!
 //! A 2048x2048 tile at stride 32 has 3,844 windows: 425 MB of model inputs if they were laid out at once. The
 //! service lays them out one batch at a time under the in-flight budget, so the peak is the decoded tiles plus
-//! that budget, however many requests run together.
+//! that budget, however many requests run together; and a request waiting for admission has not decoded its tile
+//! yet.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::Arc;
@@ -47,19 +48,21 @@ static ALLOCATOR: Counting = Counting;
 
 const KEY: &str = "test-key-viewer-0000001";
 const MIB: usize = 1024 * 1024;
+const TILE: usize = 2048 * 2048 * 3;
+const SLACK: usize = 16 * MIB;
 const BUDGET: usize = 512;
 const MAX_BATCH: usize = 32;
 const WORKERS: usize = 2;
 
-fn app() -> axum::Router {
+fn app(budget: usize, max_pending_patches: usize) -> axum::Router {
     let batcher = Batcher::spawn(
         BatchConfig {
             max_batch: MAX_BATCH,
             max_wait: Duration::from_micros(500),
             workers: WORKERS,
-            max_inflight_patches: BUDGET,
-            max_pending_patches: 4 * 4096,
-            admit_timeout: Duration::from_secs(1),
+            max_inflight_patches: budget,
+            max_pending_patches,
+            admit_timeout: Duration::from_mins(1),
         },
         |_| Ok(Box::new(FakeClassifier) as Box<dyn Classifier>),
     )
@@ -83,6 +86,11 @@ fn app() -> axum::Router {
     router(state, auth, &[])
 }
 
+/// Model inputs a budget allows, plus one batch per worker that the worker copies them into.
+fn inputs(budget: usize) -> usize {
+    (budget + WORKERS * MAX_BATCH) * PATCH_LEN * 4
+}
+
 async fn heatmap(app: axum::Router, body: String) {
     let req = Request::post("/v1/heatmap")
         .header("content-type", "application/json")
@@ -96,12 +104,26 @@ async fn heatmap(app: axum::Router, body: String) {
     assert_eq!((res.rows, res.cols), (62, 62));
 }
 
+async fn at_once(app: axum::Router, bodies: Vec<String>) {
+    let runs: Vec<_> = bodies
+        .into_iter()
+        .map(|body| tokio::spawn(heatmap(app.clone(), body)))
+        .collect();
+    for run in runs {
+        run.await.unwrap();
+    }
+}
+
 /// Peak heap above what was live when `run` started, in bytes.
 async fn peak_of(run: impl Future<Output = ()>) -> usize {
     let base = CURRENT.load(Ordering::SeqCst);
     PEAK.store(base, Ordering::SeqCst);
     run.await;
     PEAK.load(Ordering::SeqCst) - base
+}
+
+fn mib(bytes: usize) -> f64 {
+    bytes as f64 / MIB as f64
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -116,39 +138,29 @@ async fn largest_heatmaps_stay_within_the_inflight_budget() {
     let body = serde_json::json!({"image_base64": STANDARD.encode(&png), "stride": 32}).to_string();
     drop(png);
 
-    let tile_bytes = 2048 * 2048 * 3;
-    // The budget's inputs, plus one batch per worker that the worker copies them into.
-    let inputs = (BUDGET + WORKERS * MAX_BATCH) * PATCH_LEN * 4;
-    let app = app();
+    let admits_all = app(BUDGET, 4 * 4096);
+    let one = peak_of(heatmap(admits_all.clone(), body.clone())).await;
+    eprintln!("one 2048 px heatmap at stride 32: peak {:.1} MiB", mib(one));
+    assert!(one < TILE + inputs(BUDGET) + SLACK, "{:.1} MiB", mib(one));
 
-    let one = peak_of(heatmap(app.clone(), body.clone())).await;
-    eprintln!(
-        "one 2048 px heatmap at stride 32: peak {:.1} MiB",
-        one as f64 / MIB as f64
-    );
+    let many = peak_of(at_once(admits_all, vec![body.clone(); 4])).await;
+    eprintln!("4 at once: peak {:.1} MiB", mib(many));
     assert!(
-        one < tile_bytes + inputs + 16 * MIB,
-        "peak {} MiB for one heatmap",
-        one / MIB
+        many < 4 * TILE + inputs(BUDGET) + SLACK,
+        "{:.1} MiB",
+        mib(many)
     );
 
-    let requests = 4;
-    let many = peak_of(async {
-        let runs: Vec<_> = (0..requests)
-            .map(|_| tokio::spawn(heatmap(app.clone(), body.clone())))
-            .collect();
-        for run in runs {
-            run.await.unwrap();
-        }
-    })
-    .await;
+    // Room for one tile's windows and one batch of inputs at a time: the others wait for admission without a
+    // decoded tile. At most two tiles are alive at once, as one request finishes its answer while the next starts.
+    let queued = peak_of(at_once(app(MAX_BATCH, 4096), vec![body; 6])).await;
     eprintln!(
-        "{requests} at once: peak {:.1} MiB",
-        many as f64 / MIB as f64
+        "6 at once, admitted one at a time: peak {:.1} MiB",
+        mib(queued)
     );
     assert!(
-        many < requests * tile_bytes + inputs + 16 * MIB,
-        "peak {} MiB for {requests} heatmaps at once",
-        many / MIB
+        queued < 2 * TILE + inputs(MAX_BATCH) + SLACK,
+        "{:.1} MiB",
+        mib(queued)
     );
 }

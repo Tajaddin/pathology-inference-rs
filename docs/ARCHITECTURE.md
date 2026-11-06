@@ -30,16 +30,17 @@ flowchart LR
    sliding windows at a stride of at least 32 px).
 2. The API checks the key (constant-time comparison over every key) and reads each image header. A heatmap's
    window count comes from the header, so a tile over `MAX_WINDOWS_PER_REQUEST` is refused, and the client's
-   rate limit charged per patch, before any pixel is decoded. Then it decodes and validates the images.
-3. The request reserves all of its patches among `MAX_PENDING_PATCHES`, the work admitted but not yet answered;
-   with no room after `ADMIT_TIMEOUT_MS` it is refused with 503 `overloaded` and `Retry-After: 1`, so an admitted
-   request waits behind at most that much work. It is split into jobs of up to `MAX_BATCH` patches. Each job
+   rate limit charged per patch, before any pixel is decoded.
+3. The request then reserves all of its patches among `MAX_PENDING_PATCHES`, the work admitted but not yet
+   answered; with no room after `ADMIT_TIMEOUT_MS` it is refused with 503 `overloaded` and `Retry-After: 1`. A
+   refused request has decoded nothing, and an admitted one waits behind at most that much work. The images are
+   decoded and validated, and the request is split into jobs of up to `MAX_BATCH` patches. Each job
    takes that many permits from an in-flight budget (`MAX_INFLIGHT_PATCHES`) before its pixels are laid out as
    NHWC float32 (0-255; normalisation is inside the model), and gives them back when it is done, so model inputs
    never take more than the budget (512 patches, 54 MiB) however many requests arrive. With a counting allocator
-   and the fake model, one 2048 px tile at stride 32 (3,844 windows) peaked at 72.6 MiB of heap, against 829.6 MiB
-   when every window was laid out at once. The collector forms a batch of up to `MAX_BATCH` patches or waits at
-   most `MAX_WAIT_US` after the first job.
+   and the fake model, one 2048 px tile at stride 32 (3,844 windows) peaked at 28.7-38.9 MiB of heap over six
+   runs, against 829.6 MiB when every window was laid out at once. The collector forms a batch of up to
+   `MAX_BATCH` patches or waits at most `MAX_WAIT_US` after the first job.
 4. Each worker thread owns an ONNX Runtime session (`Session::run` needs exclusive access), so inference never
    waits on a lock. Probabilities are `sigmoid(logit / temperature)` with the temperature fitted on validation.
 5. A request that times out (20 s) or whose client disconnects has its queued jobs dropped unscored. A failed
