@@ -186,19 +186,23 @@ async fn heatmap(
     let started = Instant::now();
     let bytes = decode_base64(&req.image_base64)?;
     drop(req);
-    // The grid comes from the header, so an over-limit request is refused or charged before any pixel is decoded.
+    // The grid comes from the header, so a request is charged, and an over-limit one refused, before any pixel
+    // is decoded. A tile over the cap is charged the cap, so a public key cannot send oversized tiles for free.
     let header = read_header(&bytes, state.max_tile_side)?;
     let g = grid(header.width, header.height, stride)?;
     let n = g.cells();
     let max_windows = auth
         .max_windows(&client)
         .map_or(state.max_windows, |own| own.min(state.max_windows));
+    auth.check_rate(
+        &client,
+        u32::try_from(n.min(max_windows)).unwrap_or(u32::MAX),
+    )?;
     if n > max_windows {
         return Err(ApiError::BadRequest(format!(
             "the tile has {n} windows at stride {stride}; the limit is {max_windows}"
         )));
     }
-    auth.check_rate(&client, u32::try_from(n).unwrap_or(u32::MAX))?;
     let mut decoding = started.elapsed();
     let admission = admit(&state, n).await?;
     let started = Instant::now();

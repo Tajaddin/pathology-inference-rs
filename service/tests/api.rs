@@ -29,8 +29,8 @@ fn meta() -> ModelMeta {
     }
 }
 
-fn app(per_minute: u32) -> axum::Router {
-    let batcher = Batcher::spawn(
+fn fake_batcher() -> Batcher {
+    Batcher::spawn(
         BatchConfig {
             max_batch: 8,
             max_wait: Duration::from_millis(1),
@@ -41,8 +41,11 @@ fn app(per_minute: u32) -> axum::Router {
         },
         |_| Ok(Box::new(FakeClassifier) as Box<dyn Classifier>),
     )
-    .unwrap();
-    app_with(batcher, per_minute)
+    .unwrap()
+}
+
+fn app(per_minute: u32) -> axum::Router {
+    app_with(fake_batcher(), per_minute)
 }
 
 fn app_with(batcher: Batcher, per_minute: u32) -> axum::Router {
@@ -269,6 +272,23 @@ async fn a_client_with_its_own_limits_gets_a_lower_tile_cap() {
     );
     let (status, _) = post(app, "/v1/heatmap", body, Some(lab)).await;
     assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_tile_over_the_cap_is_charged_before_it_is_refused() {
+    let auth =
+        Auth::new(vec![("viewer".into(), KEY.into())], 6000).with_client_limits(&[ClientLimit {
+            client: "viewer".into(),
+            per_minute: 16,
+            max_windows: 16,
+        }]);
+    let app = app_with_auth(fake_batcher(), auth);
+    // 288 px at stride 48: 25 windows against a cap of 16, charged 16 against a quota of 16.
+    let over = json!({"image_base64": png(&flat(288, 9)), "stride": 48});
+    let (status, _) = post(app.clone(), "/v1/heatmap", over.clone(), Some(KEY)).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    let (status, _) = post(app, "/v1/heatmap", over, Some(KEY)).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
 }
 
 #[tokio::test]

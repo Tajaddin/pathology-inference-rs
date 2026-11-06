@@ -49,6 +49,12 @@ instead: each patch is 108 KiB of model inputs.
 request costs 64). Clients in `CLIENT_LIMITS` (the viewer) have their own quota and heatmap window cap instead.
 `pathology_rate_limited_total` by client shows who hits it.
 
+A heatmap over the window cap is charged the cap before it is refused with 422. The quota is charged before
+admission, so a request refused with 503 `overloaded` has been charged too; charging later would let a client over
+its quota wait in the admission queue. Request bodies (up to 16 MB) are read and base64-decoded before the charge,
+and a malformed one is refused without it: the body limit and the instance's request concurrency (64 on Cloud
+Run), not the quota, bound what those cost.
+
 ## Rolling out a model
 
 1. `make train` (or a new run), `make assets` (new parity fixtures), `cargo test` (the Rust parity test must pass
