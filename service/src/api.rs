@@ -20,7 +20,7 @@ use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
 use crate::auth::{Auth, Client, require_key};
-use crate::batcher::Batcher;
+use crate::batcher::{Batcher, Overloaded};
 use crate::error::ApiError;
 use crate::imaging::{
     PATCH, PATCH_LEN, decode_base64, decode_patch, grid, push_patch, read_header, windows,
@@ -98,6 +98,7 @@ where
     }
     match tokio::time::timeout(REPLY_TIMEOUT, state.batcher.predict_chunked(n, build)).await {
         Ok(Ok(p)) => Ok(p),
+        Ok(Err(e)) if e.is::<Overloaded>() => Err(ApiError::Overloaded),
         Ok(Err(e)) => Err(ApiError::Unavailable(e.to_string())),
         Err(_) => Err(ApiError::Unavailable("inference timed out".into())),
     }

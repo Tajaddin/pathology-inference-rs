@@ -40,7 +40,9 @@ flowchart LR
    after the first job.
 4. Each worker thread owns an ONNX Runtime session (`Session::run` needs exclusive access), so inference never
    waits on a lock. Probabilities are `sigmoid(logit / temperature)` with the temperature fitted on validation.
-5. A full queue pushes back on the request; a failed batch fails every request in it with 503.
+5. A request that finds the budget full for `ADMIT_TIMEOUT_MS` is refused with 503 `overloaded` and
+   `Retry-After: 1`. A request that times out (20 s) or whose client disconnects has its queued jobs dropped
+   unscored. A failed batch fails every request in it with 503.
 
 ## Model lifecycle
 

@@ -19,6 +19,8 @@ pub struct Config {
     pub intra_threads: usize,
     /// Patches whose model inputs may be queued or running at once (about 108 KiB each).
     pub max_inflight_patches: usize,
+    /// How long a request may wait for room in that budget before it is refused with 503.
+    pub admit_timeout: Duration,
     pub max_patches_per_request: usize,
     pub max_windows_per_request: usize,
     pub max_tile_side: u32,
@@ -68,6 +70,7 @@ impl Config {
             workers,
             intra_threads: num("INTRA_THREADS", &(cpus / workers.max(1)).max(1).to_string())?,
             max_inflight_patches: num("MAX_INFLIGHT_PATCHES", "512")?,
+            admit_timeout: Duration::from_millis(num("ADMIT_TIMEOUT_MS", "1000")?),
             max_patches_per_request: num("MAX_PATCHES_PER_REQUEST", "64")?,
             // 2048 px at the minimum stride of 32 is 62 x 62 = 3,844 windows.
             max_windows_per_request: num("MAX_WINDOWS_PER_REQUEST", "4096")?,

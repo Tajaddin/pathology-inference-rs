@@ -8,6 +8,9 @@
 //! Memory is bounded by a budget counted in patches (`max_inflight_patches`): a caller takes permits for a job
 //! before it lays out the job's inputs, and the permits come back when the job is dropped, so queued and running
 //! jobs never hold more than that many patches of inputs, however many requests arrive.
+//!
+//! Overload is refused rather than queued: a request whose first job gets no permits within `admit_timeout` fails
+//! with [`Overloaded`]. Jobs whose caller has gone (a timeout or a closed connection) are dropped unscored.
 
 use std::ops::Range;
 use std::sync::mpsc as std_mpsc;
@@ -54,13 +57,21 @@ pub struct BatchConfig {
     pub workers: usize,
     /// Patches whose inputs may be queued or running at once; each costs `PATCH_LEN` floats.
     pub max_inflight_patches: usize,
+    /// How long a new request may wait for room in the budget before it is refused.
+    pub admit_timeout: Duration,
 }
+
+/// The budget had no room for a new request within `admit_timeout`.
+#[derive(Debug, thiserror::Error)]
+#[error("the service is at capacity; retry shortly")]
+pub struct Overloaded;
 
 #[derive(Clone)]
 pub struct Batcher {
     tx: mpsc::Sender<Job>,
     budget: Arc<Semaphore>,
     max_batch: usize,
+    admit_timeout: Duration,
 }
 
 impl Batcher {
@@ -91,6 +102,7 @@ impl Batcher {
             tx,
             budget: Arc::new(Semaphore::new(config.max_inflight_patches)),
             max_batch: config.max_batch,
+            admit_timeout: config.admit_timeout,
         })
     }
 
@@ -111,7 +123,7 @@ impl Batcher {
             "job has {} values for {n} patches",
             inputs.len()
         );
-        let permit = self.acquire(n).await?;
+        let permit = self.admit(n).await?;
         let reply = self.submit(permit, inputs, n).await?;
         reply.await.map_err(|_| anyhow!("worker dropped the job"))?
     }
@@ -119,7 +131,8 @@ impl Batcher {
     /// Score any number of patches, in order, as jobs of up to `max_batch` that run in parallel.
     ///
     /// `build(range)` lays out the inputs of patches `range`; it is called only once that job holds its permits,
-    /// so a request never holds more inputs than the budget allows.
+    /// so a request never holds more inputs than the budget allows. Dropping the returned future abandons the
+    /// jobs it has queued.
     pub async fn predict_chunked<F>(&self, n: usize, mut build: F) -> Result<Vec<f32>>
     where
         F: FnMut(Range<usize>) -> Vec<f32>,
@@ -129,7 +142,12 @@ impl Batcher {
         for start in (0..n).step_by(self.max_batch) {
             let range = start..n.min(start + self.max_batch);
             let k = range.len();
-            let permit = self.acquire(k).await?;
+            // Only the first job of a request can be refused; once started, the rest wait their turn.
+            let permit = if start == 0 {
+                self.admit(k).await?
+            } else {
+                self.acquire(k).await?
+            };
             let inputs = build(range);
             anyhow::ensure!(
                 inputs.len() == k * PATCH_LEN,
@@ -147,6 +165,12 @@ impl Batcher {
             );
         }
         Ok(out)
+    }
+
+    async fn admit(&self, n: usize) -> Result<OwnedSemaphorePermit> {
+        tokio::time::timeout(self.admit_timeout, self.acquire(n))
+            .await
+            .map_err(|_| anyhow::Error::new(Overloaded))?
     }
 
     async fn acquire(&self, n: usize) -> Result<OwnedSemaphorePermit> {
@@ -192,6 +216,9 @@ async fn collect(
                 None => return,
             },
         };
+        if first.reply.is_closed() {
+            continue; // the caller has gone; dropping the job returns its permits
+        }
         let deadline = tokio::time::Instant::now() + config.max_wait;
         let mut batch = Batch {
             patches: first.n,
@@ -199,6 +226,7 @@ async fn collect(
         };
         while batch.patches < config.max_batch {
             match tokio::time::timeout_at(deadline, rx.recv()).await {
+                Ok(Some(job)) if job.reply.is_closed() => {}
                 Ok(Some(job)) if batch.patches + job.n <= config.max_batch => {
                     batch.patches += job.n;
                     batch.jobs.push(job);
@@ -223,13 +251,19 @@ async fn collect(
 
 fn run_worker(model: &mut dyn Classifier, rx: &Mutex<std_mpsc::Receiver<Batch>>) {
     loop {
-        let batch = {
+        let mut batch = {
             let Ok(guard) = rx.lock() else { return };
             match guard.recv() {
                 Ok(b) => b,
                 Err(_) => return,
             }
         };
+        // Callers can give up while their batch waits for a worker.
+        batch.jobs.retain(|job| !job.reply.is_closed());
+        if batch.jobs.is_empty() {
+            continue;
+        }
+        batch.patches = batch.jobs.iter().map(|job| job.n).sum();
         let started = Instant::now();
         for job in &batch.jobs {
             metrics::histogram!("pathology_queue_wait_seconds")
@@ -287,6 +321,17 @@ mod tests {
             max_wait: Duration::from_millis(1),
             workers,
             max_inflight_patches,
+            admit_timeout: Duration::from_secs(1),
+        }
+    }
+
+    /// Counts its batches and takes 10 ms over each.
+    struct Slow(Arc<AtomicUsize>);
+    impl Classifier for Slow {
+        fn predict(&mut self, batch: &[f32], n: usize) -> Result<Vec<f32>> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            std::thread::sleep(Duration::from_millis(10));
+            FakeClassifier.predict(batch, n)
         }
     }
 
@@ -367,6 +412,55 @@ mod tests {
         drop(held);
         assert_eq!(scoring.await.unwrap().unwrap().len(), 4);
         assert_eq!(built.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn abandoned_requests_are_not_scored() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let c = Arc::clone(&calls);
+        let batcher = Batcher::spawn(config(8, 1, 1024), move |_| {
+            Ok(Box::new(Slow(Arc::clone(&c))) as Box<dyn Classifier>)
+        })
+        .unwrap();
+        // 20 jobs of 8 patches at 10 ms each; the caller gives up after 25 ms.
+        let scoring = batcher.predict_chunked(160, |range| vec![1.0; range.len() * PATCH_LEN]);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(25), scoring)
+                .await
+                .is_err()
+        );
+        let at_cancel = calls.load(Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let after = calls.load(Ordering::SeqCst);
+        assert!(
+            after <= at_cancel + 1,
+            "{at_cancel} batches had run when the caller left, {after} in the end"
+        );
+        assert_eq!(batcher.budget.available_permits(), 1024);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn requests_are_refused_when_the_budget_stays_full() {
+        let batcher = Batcher::spawn(
+            BatchConfig {
+                admit_timeout: Duration::from_millis(20),
+                ..config(8, 1, 8)
+            },
+            |_| Ok(Box::new(FakeClassifier) as Box<dyn Classifier>),
+        )
+        .unwrap();
+        let held = batcher.acquire(8).await.unwrap();
+        let started = Instant::now();
+        let err = batcher.predict(patch(1.0), 1).await.unwrap_err();
+        assert!(err.is::<Overloaded>(), "{err}");
+        assert!(started.elapsed() < Duration::from_millis(500));
+        let err = batcher
+            .predict_chunked(1, |range| vec![1.0; range.len() * PATCH_LEN])
+            .await
+            .unwrap_err();
+        assert!(err.is::<Overloaded>(), "{err}");
+        drop(held);
+        assert_eq!(batcher.predict(patch(1.0), 1).await.unwrap().len(), 1);
     }
 
     #[test]

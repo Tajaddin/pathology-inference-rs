@@ -36,10 +36,15 @@ fn app(per_minute: u32) -> axum::Router {
             max_wait: Duration::from_millis(1),
             workers: 2,
             max_inflight_patches: 64,
+            admit_timeout: Duration::from_secs(1),
         },
         |_| Ok(Box::new(FakeClassifier) as Box<dyn Classifier>),
     )
     .unwrap();
+    app_with(batcher, per_minute)
+}
+
+fn app_with(batcher: Batcher, per_minute: u32) -> axum::Router {
     let state = Arc::new(AppState {
         batcher,
         meta: meta(),
@@ -235,6 +240,52 @@ async fn rate_limit_counts_patches_and_sets_retry_after() {
     let res = app.oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::TOO_MANY_REQUESTS);
     assert!(res.headers().get("retry-after").is_some());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn overload_is_refused_with_503_and_retry_after() {
+    struct Slow;
+    impl Classifier for Slow {
+        fn predict(&mut self, batch: &[f32], n: usize) -> anyhow::Result<Vec<f32>> {
+            std::thread::sleep(Duration::from_millis(300));
+            FakeClassifier.predict(batch, n)
+        }
+    }
+    let batcher = Batcher::spawn(
+        BatchConfig {
+            max_batch: 8,
+            max_wait: Duration::from_millis(1),
+            workers: 1,
+            max_inflight_patches: 8,
+            admit_timeout: Duration::from_millis(20),
+        },
+        |_| Ok(Box::new(Slow) as Box<dyn Classifier>),
+    )
+    .unwrap();
+    let app = app_with(batcher, 6000);
+    // Eight windows fill the whole budget for 300 ms.
+    let tile = RgbImage::from_pixel(432, 96, Rgb([9, 9, 9]));
+    let busy = tokio::spawn(post(
+        app.clone(),
+        "/v1/heatmap",
+        json!({"image_base64": png(&tile), "stride": 48}),
+        Some(KEY),
+    ));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let req = Request::post("/v1/classify")
+        .header("content-type", "application/json")
+        .header("x-api-key", KEY)
+        .body(Body::from(
+            json!({"patches": [{"image_base64": png(&flat(96, 1))}]}).to_string(),
+        ))
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(res.headers().get("retry-after").unwrap(), "1");
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let value: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(value["error"]["code"], "overloaded");
+    assert_eq!(busy.await.unwrap().0, StatusCode::OK);
 }
 
 #[tokio::test]

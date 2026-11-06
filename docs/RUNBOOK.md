@@ -32,6 +32,13 @@ Monitoring, GCP) link here. Metrics come from the service's `/metrics`.
 are idle), add replicas (Cloud Run scales on concurrency), or lower `MAX_WAIT_US` if traffic is light and the
 wait is the batching window itself.
 
+## Overload
+
+`503` with code `overloaded` and `Retry-After: 1`: the in-flight budget (`MAX_INFLIGHT_PATCHES`) stayed full for
+`ADMIT_TIMEOUT_MS`, so the request was refused before any work was done. It shows in `pathology_errors_total`
+with `code="overloaded"` and in the 5xx rate. Add replicas or workers as for Queueing. Raise the budget only if
+memory allows: each patch of budget is 108 KiB of model inputs.
+
 ## Rate limiting
 
 `429` with `Retry-After` is the per-client limit (`RATE_LIMIT_PER_MINUTE`, counted in patches, so a 64-patch
