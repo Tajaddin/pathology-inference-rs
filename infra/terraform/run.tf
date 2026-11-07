@@ -65,6 +65,11 @@ resource "google_cloud_run_v2_service" "service" {
         name  = "RUST_LOG"
         value = "info,ort=warn"
       }
+      # The viewer's key is built into its JavaScript, so it is public: 1,200 patches a minute, 256 windows a tile.
+      env {
+        name  = "CLIENT_LIMITS"
+        value = "viewer:1200:256"
+      }
       env {
         name = "API_KEYS"
         value_source {

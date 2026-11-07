@@ -13,7 +13,7 @@ import onnx
 import pytest
 from fastapi.testclient import TestClient
 from onnx import TensorProto, helper
-from PIL import Image
+from PIL import Image, ImageFile
 
 KEY = "local-dev-key-tests-000001"
 
@@ -92,9 +92,24 @@ def test_refuses_requests_without_a_valid_key(client: TestClient) -> None:
     [
         [{"image_base64": png(100, size=64)}],  # wrong size
         [{"image_base64": "not base64!"}],
+        [{"image_base64": base64.b64encode(base64.b64decode(png(100))[:60]).decode()}],  # header only
         [{"image_base64": png(100)}] * 65,  # over the 64-patch limit
         [],
     ],
 )
 def test_rejects_bad_input(client: TestClient, patches: list[dict[str, str]]) -> None:
     assert client.post("/v1/classify", json={"patches": patches}, headers=auth()).status_code == 422
+
+
+def test_checks_the_size_before_decoding_pixels(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    decoded: list[tuple[int, int]] = []
+    load = ImageFile.ImageFile.load
+
+    def spy(self: ImageFile.ImageFile) -> object:
+        decoded.append(self.size)
+        return load(self)
+
+    monkeypatch.setattr(ImageFile.ImageFile, "load", spy)
+    body = {"patches": [{"image_base64": png(100, size=2000)}]}
+    assert client.post("/v1/classify", json=body, headers=auth()).status_code == 422
+    assert decoded == []

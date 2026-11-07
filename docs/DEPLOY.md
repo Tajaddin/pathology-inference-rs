@@ -58,3 +58,9 @@ Terraform defaults to $5.
 
 6. Point the viewer at it: build `web/viewer` with `VITE_SERVICE_URL=$URL` and the viewer's key, and host
    `web/viewer/dist` on any static host. Add that origin to `CORS_ORIGINS`. (Not done yet.)
+
+   The key is built into the JavaScript, so anyone who opens the viewer can read it. Give it nothing the viewer
+   does not need: `run.tf` sets `CLIENT_LIMITS=viewer:1200:256` (1,200 patches a minute, 256 windows per tile,
+   which covers the demo tiles at stride 48), and the service refuses to start if that names a client with no key.
+   Rotate it by adding a new secret version. Closing the gap needs a backend that holds the key or short-lived
+   tokens.

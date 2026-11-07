@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context, Result};
-use pathology_service::api::{AppState, router};
+use pathology_service::api::{AppState, metrics_router, router};
 use pathology_service::auth::Auth;
 use pathology_service::batcher::{BatchConfig, Batcher};
 use pathology_service::config::Config;
@@ -41,7 +41,9 @@ async fn main() -> Result<()> {
             max_batch: config.max_batch,
             max_wait: config.max_wait,
             workers: config.workers,
-            queue: 1024,
+            max_inflight_patches: config.max_inflight_patches,
+            max_pending_patches: config.max_pending_patches,
+            admit_timeout: config.admit_timeout,
         },
         move |_| {
             Ok(Box::new(OnnxClassifier::load(
@@ -58,14 +60,14 @@ async fn main() -> Result<()> {
         meta,
         ready: AtomicBool::new(false),
         max_patches: config.max_patches_per_request,
+        max_windows: config.max_windows_per_request,
         max_tile_side: config.max_tile_side,
         min_stride: config.min_stride,
-        prometheus: Some(prometheus),
     });
-    let auth = Arc::new(Auth::new(
-        config.api_keys.clone(),
-        config.rate_limit_per_minute,
-    ));
+    let auth = Arc::new(
+        Auth::new(config.api_keys.clone(), config.rate_limit_per_minute)
+            .with_client_limits(&config.client_limits),
+    );
     if config.api_keys.is_empty() {
         tracing::warn!("API_KEYS is empty: every /v1 request will be refused");
     }
@@ -80,6 +82,15 @@ async fn main() -> Result<()> {
                 tracing::info!("model warmed up; ready");
             }
             Err(err) => tracing::error!(error = %err, "warm-up failed; staying not ready"),
+        }
+    });
+
+    let metrics_addr = SocketAddr::from(([0, 0, 0, 0], config.metrics_port));
+    let metrics_listener = tokio::net::TcpListener::bind(metrics_addr).await?;
+    tracing::info!(%metrics_addr, "metrics listening");
+    tokio::spawn(async move {
+        if let Err(err) = axum::serve(metrics_listener, metrics_router(prometheus)).await {
+            tracing::error!(error = %err, "metrics server stopped");
         }
     });
 

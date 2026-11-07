@@ -157,7 +157,7 @@
     },
     {
       "id": 5,
-      "title": "Model time per batch vs queue wait (p95)",
+      "title": "Model time per batch vs waits (p95)",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -187,6 +187,24 @@
           },
           "expr": "histogram_quantile(0.95, sum by (le) (rate(pathology_queue_wait_seconds_bucket[2m])))",
           "legendFormat": "queue wait p95"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(pathology_budget_wait_seconds_bucket[2m])))",
+          "legendFormat": "budget wait p95"
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(pathology_admission_wait_seconds_bucket[2m])))",
+          "legendFormat": "admission wait p95"
         }
       ],
       "fieldConfig": {

@@ -15,6 +15,8 @@ pub enum ApiError {
     BadRequest(String),
     #[error("model unavailable: {0}")]
     Unavailable(String),
+    #[error("the service is at capacity; retry shortly")]
+    Overloaded,
     #[error("internal error")]
     Internal(#[from] anyhow::Error),
 }
@@ -25,7 +27,7 @@ impl ApiError {
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
             Self::RateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,
             Self::BadRequest(_) => StatusCode::UNPROCESSABLE_ENTITY,
-            Self::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+            Self::Unavailable(_) | Self::Overloaded => StatusCode::SERVICE_UNAVAILABLE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -36,6 +38,7 @@ impl ApiError {
             Self::RateLimited { .. } => "rate_limited",
             Self::BadRequest(_) => "invalid_request",
             Self::Unavailable(_) => "unavailable",
+            Self::Overloaded => "overloaded",
             Self::Internal(_) => "internal",
         }
     }
@@ -55,6 +58,11 @@ impl IntoResponse for ApiError {
                 if let Ok(v) = HeaderValue::from_str(&retry_after_s.max(1).to_string()) {
                     response.headers_mut().insert(header::RETRY_AFTER, v);
                 }
+            }
+            Self::Overloaded => {
+                response
+                    .headers_mut()
+                    .insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
             }
             Self::Unauthorized => {
                 response

@@ -33,9 +33,9 @@ export class PathologyApiError extends Error {
     this.name = "PathologyApiError";
     /** HTTP status, or 0 for a network error or timeout. */
     this.status = details.status ?? 0;
-    /** Service error code: unauthorized, rate_limited, invalid_request, unavailable, internal. */
+    /** Service error code: unauthorized, rate_limited, invalid_request, unavailable, overloaded, internal. */
     this.code = details.code ?? "network";
-    /** Seconds the service asked us to wait (429), if any. */
+    /** Seconds the service asked us to wait (429, or 503 overloaded), if any. */
     this.retryAfterS = details.retryAfterS;
     this.cause = details.cause;
   }

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use pathology_service::batcher::{BatchConfig, Batcher};
-use pathology_service::imaging::{decode_rgb, push_patch};
+use pathology_service::imaging::{PATCH_LEN, decode_rgb, push_patch};
 use pathology_service::model::{Classifier, ModelMeta, OnnxClassifier};
 use serde::Deserialize;
 
@@ -46,7 +46,9 @@ async fn rust_service_matches_python_onnxruntime() {
             max_batch: 8,
             max_wait: Duration::from_millis(1),
             workers: 1,
-            queue: 32,
+            max_inflight_patches: 8,
+            max_pending_patches: 64,
+            admit_timeout: Duration::from_secs(1),
         },
         move |_| {
             Ok(
@@ -57,12 +59,21 @@ async fn rust_service_matches_python_onnxruntime() {
     )
     .unwrap();
 
-    let mut inputs = Vec::new();
-    for f in &fixtures {
-        let bytes = std::fs::read(fixtures_dir.join(&f.file)).unwrap();
-        push_patch(&decode_rgb(&bytes, 96).unwrap(), &mut inputs).unwrap();
-    }
-    let got = batcher.predict_many(inputs, fixtures.len()).await.unwrap();
+    let patches: Vec<_> = fixtures
+        .iter()
+        .map(|f| decode_rgb(&std::fs::read(fixtures_dir.join(&f.file)).unwrap(), 96).unwrap())
+        .collect();
+    let admission = batcher.admit(patches.len()).await.unwrap();
+    let got = batcher
+        .predict_chunked(admission, |range| {
+            let mut inputs = Vec::with_capacity(range.len() * PATCH_LEN);
+            for p in &patches[range] {
+                push_patch(p, &mut inputs);
+            }
+            inputs
+        })
+        .await
+        .unwrap();
     let max_diff = fixtures
         .iter()
         .zip(&got)

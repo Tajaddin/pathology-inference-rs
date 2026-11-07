@@ -11,7 +11,7 @@ use base64::engine::general_purpose::STANDARD;
 use http_body_util::BodyExt;
 use image::{Rgb, RgbImage};
 use pathology_service::api::{AppState, ClassifyResponse, HeatmapResponse, router};
-use pathology_service::auth::Auth;
+use pathology_service::auth::{Auth, ClientLimit};
 use pathology_service::batcher::{BatchConfig, Batcher};
 use pathology_service::model::{Classifier, FakeClassifier, ModelMeta};
 use serde_json::{Value, json};
@@ -29,28 +29,43 @@ fn meta() -> ModelMeta {
     }
 }
 
-fn app(per_minute: u32) -> axum::Router {
-    let batcher = Batcher::spawn(
+fn fake_batcher() -> Batcher {
+    Batcher::spawn(
         BatchConfig {
             max_batch: 8,
             max_wait: Duration::from_millis(1),
             workers: 2,
-            queue: 64,
+            max_inflight_patches: 64,
+            max_pending_patches: 64,
+            admit_timeout: Duration::from_secs(1),
         },
         |_| Ok(Box::new(FakeClassifier) as Box<dyn Classifier>),
     )
-    .unwrap();
+    .unwrap()
+}
+
+fn app(per_minute: u32) -> axum::Router {
+    app_with(fake_batcher(), per_minute)
+}
+
+fn app_with(batcher: Batcher, per_minute: u32) -> axum::Router {
+    app_with_auth(
+        batcher,
+        Auth::new(vec![("viewer".into(), KEY.into())], per_minute),
+    )
+}
+
+fn app_with_auth(batcher: Batcher, auth: Auth) -> axum::Router {
     let state = Arc::new(AppState {
         batcher,
         meta: meta(),
         ready: AtomicBool::new(true),
         max_patches: 64,
+        max_windows: 400,
         max_tile_side: 1024,
         min_stride: 32,
-        prometheus: None,
     });
-    let auth = Arc::new(Auth::new(vec![("viewer".into(), KEY.into())], per_minute));
-    router(state, auth, &["http://localhost:5173".into()])
+    router(state, Arc::new(auth), &["http://localhost:5173".into()])
 }
 
 fn png(img: &RgbImage) -> String {
@@ -181,12 +196,110 @@ async fn invalid_inputs_are_422_and_never_echoed() {
 }
 
 #[tokio::test]
+async fn heatmap_limits_are_checked_from_the_header_before_decoding() {
+    // Only the header survives: the pixels of these tiles cannot be decoded.
+    let header_only = |img: &RgbImage| {
+        let bytes = STANDARD.decode(png(img)).unwrap();
+        STANDARD.encode(&bytes[..64])
+    };
+    let big = header_only(&flat(1024, 1));
+    let (status, value) = post(
+        app(6000),
+        "/v1/heatmap",
+        json!({"image_base64": big, "stride": 32}),
+        Some(KEY),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    let message = value["error"]["message"].as_str().unwrap();
+    assert!(message.contains("900 windows"), "{message}");
+
+    // Three windows per tile against a quota of three: the second tile is charged, and refused, before decoding.
+    let app = app(3);
+    let tile = RgbImage::from_pixel(192, 96, Rgb([9, 9, 9]));
+    let (status, _) = post(
+        app.clone(),
+        "/v1/heatmap",
+        json!({"image_base64": png(&tile), "stride": 48}),
+        Some(KEY),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = post(
+        app,
+        "/v1/heatmap",
+        json!({"image_base64": header_only(&tile), "stride": 48}),
+        Some(KEY),
+    )
+    .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
+async fn a_client_with_its_own_limits_gets_a_lower_tile_cap() {
+    let batcher = Batcher::spawn(
+        BatchConfig {
+            max_batch: 8,
+            max_wait: Duration::from_millis(1),
+            workers: 1,
+            max_inflight_patches: 64,
+            max_pending_patches: 64,
+            admit_timeout: Duration::from_secs(1),
+        },
+        |_| Ok(Box::new(FakeClassifier) as Box<dyn Classifier>),
+    )
+    .unwrap();
+    let lab = "test-key-lab-00000000001";
+    let auth = Auth::new(
+        vec![("viewer".into(), KEY.into()), ("lab".into(), lab.into())],
+        6000,
+    )
+    .with_client_limits(&[ClientLimit {
+        client: "viewer".into(),
+        per_minute: 1200,
+        max_windows: 16,
+    }]);
+    let app = app_with_auth(batcher, auth);
+    // 288 px at stride 48: 5 x 5 = 25 windows.
+    let body = json!({"image_base64": png(&flat(288, 9)), "stride": 48});
+    let (status, value) = post(app.clone(), "/v1/heatmap", body.clone(), Some(KEY)).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(
+        value["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("the limit is 16")
+    );
+    let (status, _) = post(app, "/v1/heatmap", body, Some(lab)).await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_tile_over_the_cap_is_charged_before_it_is_refused() {
+    let auth =
+        Auth::new(vec![("viewer".into(), KEY.into())], 6000).with_client_limits(&[ClientLimit {
+            client: "viewer".into(),
+            per_minute: 16,
+            max_windows: 16,
+        }]);
+    let app = app_with_auth(fake_batcher(), auth);
+    // 288 px at stride 48: 25 windows against a cap of 16, charged 16 against a quota of 16.
+    let over = json!({"image_base64": png(&flat(288, 9)), "stride": 48});
+    let (status, _) = post(app.clone(), "/v1/heatmap", over.clone(), Some(KEY)).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    let (status, _) = post(app, "/v1/heatmap", over, Some(KEY)).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
 async fn rate_limit_counts_patches_and_sets_retry_after() {
     let app = app(3);
     let one = json!({"patches": [{"image_base64": png(&flat(96, 1))}, {"image_base64": png(&flat(96, 1))}]});
     let (status, _) = post(app.clone(), "/v1/classify", one.clone(), Some(KEY)).await;
     assert_eq!(status, StatusCode::OK);
+    // From the viewer's origin: the browser hides Retry-After unless CORS exposes it.
     let req = Request::post("/v1/classify")
+        .header("origin", "http://localhost:5173")
         .header("content-type", "application/json")
         .header("x-api-key", KEY)
         .body(Body::from(one.to_string()))
@@ -194,6 +307,92 @@ async fn rate_limit_counts_patches_and_sets_retry_after() {
     let res = app.oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::TOO_MANY_REQUESTS);
     assert!(res.headers().get("retry-after").is_some());
+    assert_eq!(
+        res.headers().get("access-control-expose-headers").unwrap(),
+        "retry-after"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn overload_is_refused_with_503_and_retry_after() {
+    struct Slow;
+    impl Classifier for Slow {
+        fn predict(&mut self, batch: &[f32], n: usize) -> anyhow::Result<Vec<f32>> {
+            std::thread::sleep(Duration::from_millis(300));
+            FakeClassifier.predict(batch, n)
+        }
+    }
+    let batcher = Batcher::spawn(
+        BatchConfig {
+            max_batch: 8,
+            max_wait: Duration::from_millis(1),
+            workers: 1,
+            max_inflight_patches: 8,
+            max_pending_patches: 8,
+            admit_timeout: Duration::from_millis(20),
+        },
+        |_| Ok(Box::new(Slow) as Box<dyn Classifier>),
+    )
+    .unwrap();
+    let app = app_with(batcher, 6000);
+    // Eight windows fill all the room for pending work for 300 ms.
+    let tile = RgbImage::from_pixel(432, 96, Rgb([9, 9, 9]));
+    let busy = tokio::spawn(post(
+        app.clone(),
+        "/v1/heatmap",
+        json!({"image_base64": png(&tile), "stride": 48}),
+        Some(KEY),
+    ));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let req = Request::post("/v1/classify")
+        .header("content-type", "application/json")
+        .header("x-api-key", KEY)
+        .body(Body::from(
+            json!({"patches": [{"image_base64": png(&flat(96, 1))}]}).to_string(),
+        ))
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(res.headers().get("retry-after").unwrap(), "1");
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let value: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(value["error"]["code"], "overloaded");
+    assert_eq!(busy.await.unwrap().0, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn health_and_ready_fail_once_a_worker_dies() {
+    struct Panicking;
+    impl Classifier for Panicking {
+        fn predict(&mut self, _: &[f32], _: usize) -> anyhow::Result<Vec<f32>> {
+            panic!("bug in the model wrapper")
+        }
+    }
+    let batcher = Batcher::spawn(
+        BatchConfig {
+            max_batch: 8,
+            max_wait: Duration::from_millis(1),
+            workers: 1,
+            max_inflight_patches: 8,
+            max_pending_patches: 64,
+            admit_timeout: Duration::from_secs(1),
+        },
+        |_| Ok(Box::new(Panicking) as Box<dyn Classifier>),
+    )
+    .unwrap();
+    let app = app_with(batcher, 6000);
+    let body = json!({"patches": [{"image_base64": png(&flat(96, 1))}]});
+    let (status, _) = post(app.clone(), "/v1/classify", body, Some(KEY)).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    for path in ["/health", "/ready"] {
+        let res = app
+            .clone()
+            .oneshot(Request::get(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE, "{path}");
+    }
 }
 
 #[tokio::test]
