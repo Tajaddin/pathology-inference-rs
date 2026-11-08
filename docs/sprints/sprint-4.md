@@ -16,7 +16,7 @@ except applying the Terraform (no GCP account).
 
 10 of 10 points done.
 
-## Measured (`reports/k6/summary.json`, one machine, each service limited to 4 CPUs, 30 s per step)
+## Measured (`reports/k6/summary.json` as of da50c09, 2026-10-18; one machine, each service limited to 4 CPUs, 30 s per step; repeated 2026-11-07, see the README)
 
 | One patch per request | Rust, first setting (2 x 2, 2 ms) | Rust, tuned (4 x 1, 0.5 ms) | Python baseline |
 |---|---|---|---|

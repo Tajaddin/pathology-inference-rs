@@ -29,12 +29,14 @@ one or a few patches per request. ONNX Runtime sessions in ort 2.0 need exclusiv
 ## Consequences
 
 - At low load a request waits at most `MAX_WAIT_US` for company. The load test measured that cost
-  (`reports/k6/summary.json`, 4 CPUs each): with the first setting (2 workers x 2 threads, 2 ms) single-patch p99
+  (`reports/k6/summary.json` as of da50c09, 4 CPUs each): with the first setting (2 workers x 2 threads, 2 ms) single-patch p99
   was 10-34 ms against the Python baseline's 6-9 ms. With 4 workers x 1 thread and 0.5 ms (now the default) it
   was 8-12 ms up to 400 requests/s, and at 800 requests/s the service kept up (p99 154 ms, nothing dropped) where
   the Python baseline saturated at 486 requests/s with a p99 of 9.2 s. One intra-op thread per worker beats two:
   ONNX Runtime's intra-op parallelism gains little on batches this small. These runs (2026-10-18) predate the
-  in-flight budget and admission amended above and have not been repeated since.
+  in-flight budget and admission amended above; `git show da50c09:reports/k6/summary.json` holds their rows. The
+  file itself now holds the 2026-11-07 repeat on the amended code, which the README describes: 795/s served at
+  800 requests/s with p99 405 ms and 128 dropped, and within 2.5 ms of these figures up to 400/s.
 - Admission is first come, first served: tokio's semaphore queues waiters in order, and the one at the head
   takes whatever room is free while it waits for the rest. A large request that does not fit therefore holds
   back every request behind it, even ones that would fit, until it is admitted or refused at
