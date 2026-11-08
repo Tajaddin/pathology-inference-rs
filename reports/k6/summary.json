@@ -8,9 +8,9 @@
     "patches_per_s": 100.0,
     "failed_pct": 0,
     "dropped_iterations": 0,
-    "p50_ms": 5.0,
-    "p95_ms": 5.7,
-    "p99_ms": 6.8
+    "p50_ms": 5.1,
+    "p95_ms": 6.1,
+    "p99_ms": 6.9
   },
   {
     "service": "rust_2x2",
@@ -29,27 +29,27 @@
     "service": "rust_4x1",
     "rate": 100,
     "patches": 1,
-    "requests": 3001,
+    "requests": 3000,
     "achieved_rps": 100.0,
     "patches_per_s": 100.0,
     "failed_pct": 0,
     "dropped_iterations": 0,
-    "p50_ms": 6.2,
-    "p95_ms": 7.0,
-    "p99_ms": 7.8
+    "p50_ms": 6.1,
+    "p95_ms": 6.8,
+    "p99_ms": 7.3
   },
   {
     "service": "python",
     "rate": 200,
     "patches": 1,
-    "requests": 6001,
+    "requests": 6000,
     "achieved_rps": 200.0,
     "patches_per_s": 200.0,
     "failed_pct": 0,
     "dropped_iterations": 0,
     "p50_ms": 5.0,
-    "p95_ms": 6.1,
-    "p99_ms": 7.4
+    "p95_ms": 6.0,
+    "p99_ms": 7.2
   },
   {
     "service": "rust_2x2",
@@ -73,9 +73,9 @@
     "patches_per_s": 200.0,
     "failed_pct": 0,
     "dropped_iterations": 0,
-    "p50_ms": 6.2,
-    "p95_ms": 7.4,
-    "p99_ms": 8.7
+    "p50_ms": 5.9,
+    "p95_ms": 7.1,
+    "p99_ms": 8.2
   },
   {
     "service": "python",
@@ -87,8 +87,8 @@
     "failed_pct": 0,
     "dropped_iterations": 0,
     "p50_ms": 5.4,
-    "p95_ms": 8.0,
-    "p99_ms": 12.2
+    "p95_ms": 8.1,
+    "p99_ms": 12.0
   },
   {
     "service": "rust_2x2",
@@ -108,26 +108,26 @@
     "rate": 400,
     "patches": 1,
     "requests": 12001,
-    "achieved_rps": 399.8,
-    "patches_per_s": 399.8,
+    "achieved_rps": 399.9,
+    "patches_per_s": 399.9,
     "failed_pct": 0,
     "dropped_iterations": 0,
-    "p50_ms": 7.4,
-    "p95_ms": 12.4,
-    "p99_ms": 18.3
+    "p50_ms": 6.7,
+    "p95_ms": 10.7,
+    "p99_ms": 14.7
   },
   {
     "service": "python",
     "rate": 800,
     "patches": 1,
-    "requests": 13305,
-    "achieved_rps": 419.9,
-    "patches_per_s": 419.9,
+    "requests": 14896,
+    "achieved_rps": 470.3,
+    "patches_per_s": 470.3,
     "failed_pct": 0,
-    "dropped_iterations": 10696,
-    "p50_ms": 3192.6,
-    "p95_ms": 8323.7,
-    "p99_ms": 14463.4
+    "dropped_iterations": 9104,
+    "p50_ms": 3107.7,
+    "p95_ms": 5561.8,
+    "p99_ms": 10332.9
   },
   {
     "service": "rust_2x2",
@@ -146,14 +146,14 @@
     "service": "rust_4x1",
     "rate": 800,
     "patches": 1,
-    "requests": 22167,
-    "achieved_rps": 719.4,
-    "patches_per_s": 719.4,
+    "requests": 23872,
+    "achieved_rps": 794.6,
+    "patches_per_s": 794.6,
     "failed_pct": 0,
-    "dropped_iterations": 1834,
-    "p50_ms": 985.9,
-    "p95_ms": 1622.7,
-    "p99_ms": 1765.2
+    "dropped_iterations": 128,
+    "p50_ms": 71.7,
+    "p95_ms": 351.5,
+    "p99_ms": 404.9
   },
   {
     "service": "python",
@@ -164,9 +164,9 @@
     "patches_per_s": 398.8,
     "failed_pct": 0,
     "dropped_iterations": 0,
-    "p50_ms": 51.3,
-    "p95_ms": 59.4,
-    "p99_ms": 67.2
+    "p50_ms": 50.0,
+    "p95_ms": 56.6,
+    "p99_ms": 68.8
   },
   {
     "service": "rust_2x2",
@@ -190,22 +190,22 @@
     "patches_per_s": 398.7,
     "failed_pct": 0,
     "dropped_iterations": 0,
-    "p50_ms": 51.3,
-    "p95_ms": 58.9,
-    "p99_ms": 69.8
+    "p50_ms": 51.8,
+    "p95_ms": 59.5,
+    "p99_ms": 70.4
   },
   {
     "service": "python",
     "rate": 50,
     "patches": 16,
-    "requests": 1231,
-    "achieved_rps": 36.6,
-    "patches_per_s": 584.8,
+    "requests": 1390,
+    "achieved_rps": 43.3,
+    "patches_per_s": 692.5,
     "failed_pct": 0,
-    "dropped_iterations": 269,
-    "p50_ms": 3720.7,
-    "p95_ms": 5858.7,
-    "p99_ms": 6941.1
+    "dropped_iterations": 111,
+    "p50_ms": 281.7,
+    "p95_ms": 3049.1,
+    "p99_ms": 3487.5
   },
   {
     "service": "rust_2x2",
@@ -224,27 +224,27 @@
     "service": "rust_4x1",
     "rate": 50,
     "patches": 16,
-    "requests": 1483,
-    "achieved_rps": 48.7,
-    "patches_per_s": 779.5,
+    "requests": 1500,
+    "achieved_rps": 49.7,
+    "patches_per_s": 794.5,
     "failed_pct": 0,
-    "dropped_iterations": 17,
-    "p50_ms": 93.1,
-    "p95_ms": 519.1,
-    "p99_ms": 571.5
+    "dropped_iterations": 1,
+    "p50_ms": 67.8,
+    "p95_ms": 169.1,
+    "p99_ms": 210.1
   },
   {
     "service": "python",
     "rate": 100,
     "patches": 16,
-    "requests": 1207,
-    "achieved_rps": 36.6,
-    "patches_per_s": 585.3,
+    "requests": 1279,
+    "achieved_rps": 38.6,
+    "patches_per_s": 617.4,
     "failed_pct": 0,
-    "dropped_iterations": 1793,
-    "p50_ms": 4702.1,
-    "p95_ms": 6844.4,
-    "p99_ms": 9349.6
+    "dropped_iterations": 1721,
+    "p50_ms": 4569.7,
+    "p95_ms": 6460.0,
+    "p99_ms": 8191.1
   },
   {
     "service": "rust_2x2",
@@ -263,13 +263,13 @@
     "service": "rust_4x1",
     "rate": 100,
     "patches": 16,
-    "requests": 1742,
-    "achieved_rps": 53.7,
-    "patches_per_s": 860.0,
+    "requests": 1813,
+    "achieved_rps": 55.6,
+    "patches_per_s": 888.9,
     "failed_pct": 0,
-    "dropped_iterations": 1258,
-    "p50_ms": 2733.9,
-    "p95_ms": 3360.7,
-    "p99_ms": 3400.2
+    "dropped_iterations": 1187,
+    "p50_ms": 3074.3,
+    "p95_ms": 3627.5,
+    "p99_ms": 3709.1
   }
 ]

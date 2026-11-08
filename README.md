@@ -15,17 +15,19 @@ viewer that draws tumour heatmaps over slide tiles. Research demo, not a medical
 | Test split, scored once | **AUC 0.9409 (95% CI 0.9386-0.9435)**; the exported ONNX model the service runs: **0.9410**; 8-way test-time augmentation 0.9475; slide level 0.975 on 129 slides | [`metrics.json`](reports/metrics.json), [`onnx-test.json`](reports/onnx-test.json) |
 | Where it falls short | Calibration fitted on validation did not transfer (test ECE 0.110); at 0.5 it finds 69.6% of tumour patches at 96.8% specificity | [model card](docs/MODEL-CARD.md) |
 | Rust matches Python | The Rust service reproduces Python `onnxruntime` to **1.5e-8** on 16 real test patches, through its own decoding and batching (a CI test) | [`parity.rs`](service/tests/parity.rs) |
-| Under load (4 CPUs each, k6, 2026-11-07) | At 800 single-patch requests/s the Rust service **served 719/s (p99 1.77 s, 1,834 dropped)**; the Python baseline saturated at **420/s with p99 14.5 s** and dropped 10,696. At 400/s both served every request, p99 18.3 ms against 12.2 ms | [`reports/k6`](reports/k6) |
-| At light load (same run) | Python was about 1 ms faster (p99 6.8 ms against 7.8 ms at 100 requests/s): batching waits up to 0.5 ms for company | same |
+| Under load (4 CPUs each, k6, 2026-11-07) | At 800 single-patch requests/s the Rust service **served 795/s (p99 405 ms, 128 of 24,000 dropped)**; the Python baseline saturated at **470/s with p99 10.3 s** and dropped 9,104. At 400/s both served every request, p99 14.7 ms against 12.0 ms | [`reports/k6`](reports/k6) |
+| At light load (same run) | Python was about 0.4 ms faster (p99 6.9 ms against 7.3 ms at 100 requests/s): batching waits up to 0.5 ms for company | same |
 | Footprint | Service image 180 MB; Python baseline 977 MB | `docker image ls` |
 | On Cloud Run (us-central1, 2 vCPU, scale to zero) | Same probabilities as the local model on the 16 test patches (max difference **2.9e-08**). First request after scaling to zero **2.35 s**, warm 0.19 s; k6 at 20, 50 and 100 single-patch requests/s: **0 failures, p99 136, 122 and 142 ms**, measured from a home connection in Tampa, so the network is most of it | [`reports/cloud-run`](reports/cloud-run) |
 
 Every local timing is from one desktop: Intel i5-13600KF, 32 GB (WSL2 VM 15.5 GB), RTX 4060 8 GB, Docker Desktop.
 The two k6 rows are `make compare bench` on 2026-11-07 at 6080d78, the first run since the batcher gained request
-admission, the in-flight budget and 503 `overloaded`. Both services came out slower than in the 2026-10-18 run that
-ADR 0003 records; other desktop applications were using the host's CPU during the run, and the service's own metrics
-show requests waiting for the in-flight budget, a wait the October code did not have. The `rust_2x2` files in
-`reports/k6` are still that October run.
+admission, the in-flight budget and 503 `overloaded`, taken on an otherwise idle host (CPU 7-14% before the run,
+nothing else in Docker). Against the 2026-10-18 run that ADR 0003 records (799/s, p99 154 ms, nothing dropped), the
+service now drops 0.5% of the offered requests at 800/s and its p99 there is 405 ms; up to 400/s it is within 2.5 ms
+of October. A run earlier that day, while other desktop applications were using one to three cores, gave 719/s with
+p99 1.77 s and 1,834 dropped, and the Python baseline fell the same way, so it measured the host rather than the code
+(kept in the history as commit 56e5683). The `rust_2x2` files in `reports/k6` are still the October run.
 The Cloud Run row is the deployed service, measured on 2026-10-18 ([DEPLOY.md](docs/DEPLOY.md)).
 
 The first service configuration (2 workers x 2 threads, 2 ms window) lost to Python at every load below
